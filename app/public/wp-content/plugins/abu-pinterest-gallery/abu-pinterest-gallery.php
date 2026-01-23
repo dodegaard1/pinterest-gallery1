@@ -1,0 +1,458 @@
+<?php
+/**
+ * Plugin Name: ABU Pinterest Gallery
+ * Description: Thin-slice Pinterest-style gallery for posts and pages.
+ * Version: 0.1.0
+ * Author: ABU
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+define( 'ABU_PG_PATH', plugin_dir_path( __FILE__ ) );
+define( 'ABU_PG_URL', plugin_dir_url( __FILE__ ) );
+define( 'ABU_PG_META_KEY', '_abu_gallery_media_ids' );
+define( 'ABU_PG_DEBUG_LOG_PATH', '/Users/danielodegaard/Local Sites/abu-dev/.cursor/debug.log' );
+
+if ( ! function_exists( 'your_plugin_icon' ) ) {
+	function your_plugin_icon( $name, $class = '' ) {
+		$name = sanitize_file_name( $name );
+		$path = ABU_PG_PATH . 'assets/icons/radix/' . $name . '.svg';
+		if ( ! file_exists( $path ) ) {
+			return '';
+		}
+
+		$svg = file_get_contents( $path );
+		if ( ! $svg ) {
+			return '';
+		}
+
+		$class_attr = $class ? ' class="' . esc_attr( $class ) . '"' : '';
+		$svg        = preg_replace( '/<svg\b(?![^>]*\bclass=)/', '<svg' . $class_attr, $svg, 1 );
+		return $svg;
+	}
+}
+
+if ( ! function_exists( 'abu_pg_debug_log' ) ) {
+	function abu_pg_debug_log( $payload ) {
+		if ( ! is_array( $payload ) ) {
+			return;
+		}
+		$line = wp_json_encode( $payload );
+		if ( ! $line ) {
+			return;
+		}
+		@file_put_contents( ABU_PG_DEBUG_LOG_PATH, $line . PHP_EOL, FILE_APPEND );
+	}
+}
+
+if ( ! function_exists( 'abu_pg_handle_debug_log' ) ) {
+	function abu_pg_handle_debug_log() {
+		$raw = file_get_contents( 'php://input' );
+		if ( ! $raw ) {
+			wp_send_json_error( array( 'message' => 'empty' ), 400 );
+		}
+		$payload = json_decode( $raw, true );
+		if ( ! is_array( $payload ) ) {
+			wp_send_json_error( array( 'message' => 'invalid' ), 400 );
+		}
+		$payload['serverTimestamp'] = round( microtime( true ) * 1000 );
+		abu_pg_debug_log( $payload );
+		wp_send_json_success();
+	}
+}
+
+function abu_pg_register_assets() {
+	wp_register_style(
+		'abu-pg-admin',
+		ABU_PG_URL . 'assets/css/admin.css',
+		array(),
+		'0.1.0'
+	);
+	wp_register_script(
+		'abu-pg-admin',
+		ABU_PG_URL . 'assets/js/admin-media.js',
+		array( 'jquery', 'media-editor', 'media-views' ),
+		'0.1.0',
+		true
+	);
+
+	wp_register_style(
+		'abu-pg-gallery',
+		ABU_PG_URL . 'assets/css/gallery.css',
+		array(),
+		'0.1.6'
+	);
+	$gallery_version = '0.2.4';
+	$debug_enabled = isset( $_GET['abu_pg_debug'] ) && '0' !== sanitize_text_field( wp_unslash( $_GET['abu_pg_debug'] ) );
+	if ( is_user_logged_in() || $debug_enabled ) {
+		$gallery_version .= '-' . time();
+	}
+	wp_register_script(
+		'abu-pg-gallery',
+		ABU_PG_URL . 'assets/js/gallery.js',
+		array(),
+		$gallery_version,
+		true
+	);
+}
+add_action( 'init', 'abu_pg_register_assets' );
+add_action( 'wp_ajax_abu_pg_debug_log', 'abu_pg_handle_debug_log' );
+add_action( 'wp_ajax_nopriv_abu_pg_debug_log', 'abu_pg_handle_debug_log' );
+
+function abu_pg_admin_enqueue( $hook ) {
+	if ( ! in_array( $hook, array( 'post.php', 'post-new.php' ), true ) ) {
+		return;
+	}
+
+	$post_type = get_current_screen() ? get_current_screen()->post_type : '';
+	if ( ! in_array( $post_type, array( 'post', 'page' ), true ) ) {
+		return;
+	}
+
+	wp_enqueue_media();
+	wp_enqueue_style( 'abu-pg-admin' );
+	wp_enqueue_script( 'abu-pg-admin' );
+
+	wp_localize_script(
+		'abu-pg-admin',
+		'abuPgAdmin',
+		array(
+			'metaKey' => ABU_PG_META_KEY,
+			'nonce'   => wp_create_nonce( 'abu_pg_meta_box' ),
+			'labels'  => array(
+				'title'      => 'Select Media',
+				'buttonText' => 'Use selected media',
+			),
+		)
+	);
+}
+add_action( 'admin_enqueue_scripts', 'abu_pg_admin_enqueue' );
+
+function abu_pg_add_meta_box() {
+	foreach ( array( 'post', 'page' ) as $post_type ) {
+		add_meta_box(
+			'abu-pg-meta',
+			'ABU Pinterest Gallery',
+			'abu_pg_render_meta_box',
+			$post_type,
+			'side',
+			'default'
+		);
+	}
+}
+add_action( 'add_meta_boxes', 'abu_pg_add_meta_box' );
+
+function abu_pg_render_meta_box( $post ) {
+	wp_nonce_field( 'abu_pg_meta_box', 'abu_pg_nonce' );
+
+	$ids_csv = get_post_meta( $post->ID, ABU_PG_META_KEY, true );
+	$ids     = array_filter( array_map( 'intval', explode( ',', (string) $ids_csv ) ) );
+	?>
+	<div class="abu-pg-meta-box">
+		<input type="hidden" name="abu_gallery_media_ids" id="abu-gallery-media-ids" value="<?php echo esc_attr( $ids_csv ); ?>">
+		<div class="abu-pg-actions">
+			<button type="button" class="button abu-pg-select-media">Select / Edit Media</button>
+			<button type="button" class="button abu-pg-clear-media">Clear</button>
+		</div>
+		<div class="abu-pg-selected" aria-live="polite">
+			<?php
+			if ( $ids ) {
+				foreach ( $ids as $id ) {
+					$attachment = get_post( $id );
+					if ( ! $attachment ) {
+						continue;
+					}
+					$mime = get_post_mime_type( $id );
+					$is_image = $mime && 0 === strpos( $mime, 'image/' );
+					$thumb = $is_image ? wp_get_attachment_image_url( $id, 'thumbnail' ) : '';
+					$label = $attachment->post_title ? $attachment->post_title : $attachment->post_name;
+					?>
+					<div class="abu-pg-item" data-id="<?php echo esc_attr( $id ); ?>">
+						<?php if ( $thumb ) : ?>
+							<img src="<?php echo esc_url( $thumb ); ?>" alt="">
+						<?php else : ?>
+							<div class="abu-pg-item-placeholder">Video</div>
+						<?php endif; ?>
+						<div class="abu-pg-item-label"><?php echo esc_html( $label ); ?></div>
+					</div>
+					<?php
+				}
+			} else {
+				echo '<div class="abu-pg-empty">No media selected.</div>';
+			}
+			?>
+		</div>
+	</div>
+	<?php
+}
+
+function abu_pg_save_meta_box( $post_id ) {
+	if ( ! isset( $_POST['abu_pg_nonce'] ) || ! wp_verify_nonce( sanitize_text_field( wp_unslash( $_POST['abu_pg_nonce'] ) ), 'abu_pg_meta_box' ) ) {
+		return;
+	}
+
+	if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+		return;
+	}
+
+	if ( wp_is_post_revision( $post_id ) ) {
+		return;
+	}
+
+	$post_type = get_post_type( $post_id );
+	if ( ! in_array( $post_type, array( 'post', 'page' ), true ) ) {
+		return;
+	}
+
+	if ( ! current_user_can( 'edit_post', $post_id ) ) {
+		return;
+	}
+
+	$raw = isset( $_POST['abu_gallery_media_ids'] ) ? sanitize_text_field( wp_unslash( $_POST['abu_gallery_media_ids'] ) ) : '';
+	$ids = array();
+	if ( $raw ) {
+		foreach ( explode( ',', $raw ) as $id ) {
+			$id = absint( $id );
+			if ( $id ) {
+				$ids[] = $id;
+			}
+		}
+	}
+
+	$ids_csv = $ids ? implode( ',', $ids ) : '';
+	if ( $ids_csv ) {
+		update_post_meta( $post_id, ABU_PG_META_KEY, $ids_csv );
+	} else {
+		delete_post_meta( $post_id, ABU_PG_META_KEY );
+	}
+}
+add_action( 'save_post', 'abu_pg_save_meta_box' );
+
+function abu_pg_shortcode() {
+	if ( ! is_singular() ) {
+		return '';
+	}
+
+	$post_id = get_the_ID();
+	if ( ! $post_id ) {
+		return '';
+	}
+
+	$ids_csv = get_post_meta( $post_id, ABU_PG_META_KEY, true );
+	if ( ! $ids_csv ) {
+		return '';
+	}
+
+	$debug_enabled = isset( $_GET['abu_pg_debug'] ) && '0' !== sanitize_text_field( wp_unslash( $_GET['abu_pg_debug'] ) );
+
+	wp_enqueue_style( 'abu-pg-gallery' );
+	wp_enqueue_script( 'abu-pg-gallery' );
+	if ( $debug_enabled ) {
+		wp_localize_script(
+			'abu-pg-gallery',
+			'abuPgDebug',
+			array(
+				'enabled'  => true,
+				'endpoint' => admin_url( 'admin-ajax.php' ),
+			)
+		);
+	}
+
+	$ids = array_filter( array_map( 'intval', explode( ',', (string) $ids_csv ) ) );
+	if ( ! $ids ) {
+		return '';
+	}
+
+	ob_start();
+	?>
+	<div class="abu-pg-gallery" data-post-id="<?php echo esc_attr( $post_id ); ?>" data-column-width="280" data-gutter="16">
+		<?php foreach ( $ids as $id ) : ?>
+			<?php
+			$url  = wp_get_attachment_url( $id );
+			$mime = get_post_mime_type( $id );
+			if ( ! $url || ! $mime ) {
+				continue;
+			}
+			$is_image = 0 === strpos( $mime, 'image/' );
+			$is_video = 0 === strpos( $mime, 'video/' );
+			if ( ! $is_image && ! $is_video ) {
+				continue;
+			}
+			$attachment = get_post( $id );
+			$created_at = $attachment ? get_post_time( DATE_ATOM, true, $attachment ) : '';
+			$filename = $url ? wp_basename( $url ) : '';
+			$title = $attachment ? $attachment->post_title : '';
+			$media_width = 0;
+			$media_height = 0;
+			if ( $is_video ) {
+				$poster_id = absint( get_post_meta( $id, '_abu_video_poster_id', true ) );
+				$video_720_id = absint( get_post_meta( $id, '_abu_video_720_id', true ) );
+				$video_360_id = absint( get_post_meta( $id, '_abu_video_360_id', true ) );
+
+				if ( ! $poster_id || ! $video_720_id || ! $video_360_id ) {
+					$child_ids = get_posts(
+						array(
+							'post_type'      => 'attachment',
+							'post_status'    => 'inherit',
+							'posts_per_page' => -1,
+							'fields'         => 'ids',
+							'post_parent'    => $id,
+							'meta_key'       => '_abu_video_quality',
+						)
+					);
+					foreach ( $child_ids as $child_id ) {
+						$quality = get_post_meta( $child_id, '_abu_video_quality', true );
+						if ( 'poster' === $quality && ! $poster_id ) {
+							$poster_id = absint( $child_id );
+							update_post_meta( $id, '_abu_video_poster_id', $poster_id );
+						}
+						if ( '720' === $quality && ! $video_720_id ) {
+							$video_720_id = absint( $child_id );
+							update_post_meta( $id, '_abu_video_720_id', $video_720_id );
+						}
+						if ( '360' === $quality && ! $video_360_id ) {
+							$video_360_id = absint( $child_id );
+							update_post_meta( $id, '_abu_video_360_id', $video_360_id );
+						}
+					}
+				}
+
+				$media_width = absint( get_post_meta( $id, '_abu_video_width', true ) );
+				$media_height = absint( get_post_meta( $id, '_abu_video_height', true ) );
+			} else {
+				$meta = wp_get_attachment_metadata( $id );
+				if ( is_array( $meta ) && ! empty( $meta['width'] ) && ! empty( $meta['height'] ) ) {
+					$media_width = absint( $meta['width'] );
+					$media_height = absint( $meta['height'] );
+				}
+			}
+			$poster_url = $is_video && $poster_id ? wp_get_attachment_url( $poster_id ) : '';
+			$url_720    = $is_video && $video_720_id ? wp_get_attachment_url( $video_720_id ) : '';
+			$url_360    = $is_video && $video_360_id ? wp_get_attachment_url( $video_360_id ) : '';
+			if ( $is_video ) {
+				if ( ! $poster_url ) {
+					$poster_url = get_post_meta( $id, '_abu_video_poster_url', true );
+				}
+				if ( ! $url_720 ) {
+					$url_720 = get_post_meta( $id, '_abu_video_720p_url', true );
+				}
+				if ( ! $url_360 ) {
+					$url_360 = get_post_meta( $id, '_abu_video_360p_url', true );
+				}
+
+				$derivatives_meta = get_post_meta( $id, '_abu_video_derivatives', true );
+				if ( $derivatives_meta && ! is_array( $derivatives_meta ) && is_string( $derivatives_meta ) ) {
+					$decoded = json_decode( $derivatives_meta, true );
+					if ( is_array( $decoded ) ) {
+						$derivatives_meta = $decoded;
+					}
+				}
+				if ( is_array( $derivatives_meta ) ) {
+					if ( ! $poster_url && ! empty( $derivatives_meta['poster_url'] ) ) {
+						$poster_url = $derivatives_meta['poster_url'];
+					}
+					if ( ! $url_720 && ! empty( $derivatives_meta['720p_url'] ) ) {
+						$url_720 = $derivatives_meta['720p_url'];
+					}
+					if ( ! $url_360 && ! empty( $derivatives_meta['360p_url'] ) ) {
+						$url_360 = $derivatives_meta['360p_url'];
+					}
+					if ( ! $media_width && ! empty( $derivatives_meta['width'] ) ) {
+						$media_width = absint( $derivatives_meta['width'] );
+					}
+					if ( ! $media_height && ! empty( $derivatives_meta['height'] ) ) {
+						$media_height = absint( $derivatives_meta['height'] );
+					}
+				}
+
+				if ( ! $poster_url || ! $url_720 || ! $url_360 ) {
+					$upload_dir = wp_upload_dir();
+					$base_dir   = trailingslashit( $upload_dir['basedir'] ) . 'abu-video/' . $id . '/';
+					$base_url   = trailingslashit( $upload_dir['baseurl'] ) . 'abu-video/' . $id . '/';
+					if ( ! $poster_url && file_exists( $base_dir . 'poster.jpg' ) ) {
+						$poster_url = $base_url . 'poster.jpg';
+					}
+					if ( ! $url_720 && file_exists( $base_dir . 'video-720p.mp4' ) ) {
+						$url_720 = $base_url . 'video-720p.mp4';
+					}
+					if ( ! $url_360 && file_exists( $base_dir . 'video-360p.mp4' ) ) {
+						$url_360 = $base_url . 'video-360p.mp4';
+					}
+				}
+			}
+			$debug_meta = array(
+				'poster' => $poster_url ? 'yes' : 'no',
+				'360'    => $url_360 ? 'yes' : 'no',
+				'720'    => $url_720 ? 'yes' : 'no',
+			);
+			$debug_ids = array(
+				'poster' => $poster_id,
+				'360'    => $video_360_id,
+				'720'    => $video_720_id,
+			);
+			?>
+			<div class="abu-pg-tile"
+				data-id="<?php echo esc_attr( $id ); ?>"
+				data-url="<?php echo esc_url( $url ); ?>"
+				data-type="<?php echo esc_attr( $is_video ? 'video' : 'image' ); ?>"
+				<?php if ( $created_at ) : ?>data-created="<?php echo esc_attr( $created_at ); ?>"<?php endif; ?>
+				<?php if ( $filename ) : ?>data-filename="<?php echo esc_attr( $filename ); ?>"<?php endif; ?>
+				<?php if ( $title ) : ?>data-title="<?php echo esc_attr( $title ); ?>"<?php endif; ?>
+				<?php if ( $media_width ) : ?>data-width="<?php echo esc_attr( $media_width ); ?>"<?php endif; ?>
+				<?php if ( $media_height ) : ?>data-height="<?php echo esc_attr( $media_height ); ?>"<?php endif; ?>
+				<?php if ( $debug_enabled && $is_video ) : ?>
+					data-abu-meta-360="<?php echo esc_attr( $debug_meta['360'] ); ?>"
+					data-abu-meta-720="<?php echo esc_attr( $debug_meta['720'] ); ?>"
+					data-abu-meta-poster="<?php echo esc_attr( $debug_meta['poster'] ); ?>"
+					data-abu-meta-360-id="<?php echo esc_attr( $debug_ids['360'] ); ?>"
+					data-abu-meta-720-id="<?php echo esc_attr( $debug_ids['720'] ); ?>"
+					data-abu-meta-poster-id="<?php echo esc_attr( $debug_ids['poster'] ); ?>"
+				<?php endif; ?>>
+			<?php if ( $is_image ) : ?>
+				<?php
+				echo wp_get_attachment_image(
+					$id,
+					'medium_large',
+					false,
+					array(
+						'loading'  => 'lazy',
+						'decoding' => 'async',
+						'sizes'    => '(max-width: 600px) 50vw, 280px',
+					)
+				);
+				?>
+			<?php else : ?>
+					<video class="abu-pg-video" playsinline preload="metadata"
+						data-src-original="<?php echo esc_url( $url ); ?>"
+						<?php if ( $url_360 ) : ?>data-src-360="<?php echo esc_url( $url_360 ); ?>"<?php endif; ?>
+						<?php if ( $url_720 ) : ?>data-src-720="<?php echo esc_url( $url_720 ); ?>"<?php endif; ?>
+						<?php if ( $poster_url ) : ?>data-poster="<?php echo esc_url( $poster_url ); ?>" poster="<?php echo esc_url( $poster_url ); ?>"<?php endif; ?>>
+						<source type="<?php echo esc_attr( $mime ); ?>">
+					</video>
+					<div class="abu-pg-video-overlay" aria-hidden="true"></div>
+					<div class="abu-pg-video-play" aria-hidden="true">
+						<span class="abu-pg-video-play-bg"></span>
+						<?php echo your_plugin_icon( 'play', 'yp-icon' ); ?>
+					</div>
+					<button type="button" class="abu-pg-mute yp-icon-button" aria-pressed="false" aria-label="Mute">
+						<span class="abu-pg-mute-icon abu-pg-mute-icon-on">
+							<?php echo your_plugin_icon( 'speaker-loud', 'yp-icon' ); ?>
+						</span>
+						<span class="abu-pg-mute-icon abu-pg-mute-icon-off">
+							<?php echo your_plugin_icon( 'speaker-off', 'yp-icon' ); ?>
+						</span>
+					</button>
+				<?php endif; ?>
+				<button type="button" class="abu-pg-download yp-icon-button" aria-label="Download">
+					<?php echo your_plugin_icon( 'download', 'yp-icon' ); ?>
+				</button>
+			</div>
+		<?php endforeach; ?>
+		<div class="abu-pg-icon-template" data-icon="caret-left" hidden>
+			<?php echo your_plugin_icon( 'caret-left', 'yp-icon' ); ?>
+		</div>
+	</div>
+	<?php
+	return ob_get_clean();
+}
+add_shortcode( 'abu_pinterest_gallery', 'abu_pg_shortcode' ); 
