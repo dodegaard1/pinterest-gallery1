@@ -1,0 +1,156 @@
+:root {
+    --loading-color-1: #eff1f3;
+    --loading-color-2: #e2e2e2;
+    --loading-animation: shimmer 2s infinite;
+    --loading-opacity: 0.85;
+    --table-td-padding: 16px 8px;
+    --success-checkout-notice-background: green;
+    --success-checkout-notice-color: white;
+}
+
+/*.w-video.w-embed {
+    position: relative;
+    padding-bottom: 56.25%;
+    padding-top: 30px;
+    overflow: hidden;
+    max-width: 100%;
+    height: auto;
+}*/
+
+table.woocommerce-grouped-product-list.group_table td {
+    padding: var(--table-td-padding);
+}
+
+table.woocommerce-grouped-product-list.group_table td * {
+    margin: 0;
+}
+
+.w-richtext  .wp-block-image figure img {
+    height: auto;
+}
+
+.screen-reader-text {
+    display: none!important;
+}
+
+.w-video.w-embed:empty {
+    display: none;
+}
+
+[data-node-type="cart-remove-link"] * {
+    pointer-events: none;
+}
+
+.udy-loading {
+    position: relative;
+    overflow: hidden;
+    pointer-events: none;
+    animation : var(--loading-animation);
+    background: linear-gradient(to right, var(--loading-color-1) 4%, var(--loading-color-2) 25%, var(--loading-color-1) 36%);
+    background-size: 1000px 100%;
+    opacity: var(--loading-opacity);
+}
+
+.udy-loading * {
+    color: transparent;
+    opacity: 0;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: -1000px 0;
+    }
+    100% {
+        background-position: 1000px 0;
+    }
+}
+
+body:not(.udesly-wc-loaded) [data-variation-prop], body:not(.udesly-wc-loaded) form.cart.grouped_form {
+    opacity: 0;
+}
+
+.w-commerce-commercecartitemimage {
+    object-fit: cover;
+}
+
+.w-commerce-commercecheckoutformcontainer {
+    min-height: unset;
+}
+
+.woocommerce-NoticeGroup-checkout, [data-node-type="commerce-checkout-error-state"] {
+    display: none;
+}
+
+form [data-node-type="commerce-checkout-error-state"] {
+    display: inherit;
+}
+
+.w-commerce-commercecheckouterrorstate.success {
+    background-color: var(--success-checkout-notice-background);
+    color: var(--success-checkout-notice-color);
+}
+
+ul.w-commerce-commercecheckoutoptionlist {
+    padding-left: 0;
+}
+
+abbr[title] {
+    border-bottom: none;
+    text-decoration: none;
+}
+
+body.woocommerce-page form .form-row label.woocommerce-form__label-for-checkbox {
+    display: flex;
+    align-items: center;
+}
+
+.woocommerce-checkout #payment .wc_payment_method .payment_box {
+    background-color: inherit;
+    color: inherit;
+    padding-left: 0;
+}
+.woocommerce-checkout #payment .wc_payment_method .payment_box::before {
+    display: none;
+}
+
+.about_paypal {
+    display: none;
+    white-space: nowrap;
+}
+
+.chosen .about_paypal {
+    display: inherit;
+}
+
+.updating-checkout .about_paypal {
+    display: none;
+}
+
+[data-node-type="commerce-checkout-shipping-methods-list"] li {
+    display: block;
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+}
+
+span.woocommerce-terms-and-conditions-checkbox-text {
+    margin-left: 8px;
+    font-size: 90%;
+}
+
+.woocommerce-terms-and-conditions-wrapper .required {
+    display: none;
+}
+
+.udesly-hidden {
+    display: none!important;
+}
+
+body #add_payment_method #payment, body .woocommerce-cart #payment, body .woocommerce-checkout #payment {
+    background: inherit;
+    border-radius: inherit;
+}
+
+.w-checkout-error-msg a.button.wc-forward {
+    display: none;
+}

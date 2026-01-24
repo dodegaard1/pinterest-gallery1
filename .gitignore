@@ -1,0 +1,42 @@
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+
+# Dependencies
+node_modules/
+vendor/
+
+# Logs and local runtime data
+logs/
+app/sql/
+
+# Local plugin working copies
+pinterest-gallery/
+pinterest-gallery1/
+
+# Local server config
+conf/
+
+# WordPress local config and generated content
+app/public/wp-config.php
+app/public/wp-config-*.php
+app/public/wp-content/uploads/
+app/public/wp-content/cache/
+app/public/wp-content/upgrade/
+app/public/wp-content/backups/
+
+# WordPress core files (keep wp-content tracked)
+app/public/wp-admin/
+app/public/wp-includes/
+app/public/wp-*.php
+app/public/index.php
+app/public/xmlrpc.php
+app/public/license.txt
+app/public/readme.html
+app/public/.htaccess

@@ -320,10 +320,18 @@ function abu_pg_shortcode() {
 				$media_width = absint( get_post_meta( $id, '_abu_video_width', true ) );
 				$media_height = absint( get_post_meta( $id, '_abu_video_height', true ) );
 			} else {
-				$meta = wp_get_attachment_metadata( $id );
-				if ( is_array( $meta ) && ! empty( $meta['width'] ) && ! empty( $meta['height'] ) ) {
-					$media_width = absint( $meta['width'] );
-					$media_height = absint( $meta['height'] );
+				// Get dimensions from the actual medium_large size being rendered
+				$image_src = wp_get_attachment_image_src( $id, 'medium_large' );
+				if ( $image_src && ! empty( $image_src[1] ) && ! empty( $image_src[2] ) ) {
+					$media_width = absint( $image_src[1] );
+					$media_height = absint( $image_src[2] );
+				} else {
+					// Fallback to full size metadata
+					$meta = wp_get_attachment_metadata( $id );
+					if ( is_array( $meta ) && ! empty( $meta['width'] ) && ! empty( $meta['height'] ) ) {
+						$media_width = absint( $meta['width'] );
+						$media_height = absint( $meta['height'] );
+					}
 				}
 			}
 			$poster_url = $is_video && $poster_id ? wp_get_attachment_url( $poster_id ) : '';

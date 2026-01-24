@@ -1,0 +1,11 @@
+.DS_Store
+Thumbs.db
+*.log
+
+/uploads/
+/cache/
+/upgrade/
+/backup-*/
+/backups-*/
+/wp-cache-config.php
+/debug.log

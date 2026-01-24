@@ -1,0 +1,42 @@
+body, html {
+    margin: 0;
+    padding: 0;
+}
+
+.iframe-wrapper {
+    width: 100%;
+    height: calc(100vh - 62px);
+}
+
+iframe {
+    width: 100%;
+    height: 100%;
+    border: none;
+}
+
+[class^=Watermark] {
+    display: none!important;
+}
+
+[data-tooltip="Table"], [aria-label="toggles cms sidebar"] {
+    display: none!important;
+}
+ label[class^=FieldLabel] {
+  display: none;
+}
+
+ /*label[for^=textarea] + div*/ [data-tooltip="Heading"] {
+     display: none!important;
+ }
+
+[class^=FullscreenModal] {
+    max-width: 800px!important;
+}
+
+[class^=FormFooter] button {
+    flex: 1;
+}
+
+[class^=PanelBody] * {
+    white-space: break-spaces;
+}
