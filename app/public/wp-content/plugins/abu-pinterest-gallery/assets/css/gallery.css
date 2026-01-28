@@ -5,6 +5,9 @@
 	width: 100%;
 	margin: 0 auto;
 	min-height: 200px;
+	transform: translateZ(0);
+	backface-visibility: hidden;
+	will-change: transform;
 }
 
 .abu-pg-tile {
@@ -124,6 +127,39 @@
 	font-weight: 600;
 	cursor: pointer;
 	box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.abu-pg-save__label {
+	display: inline-block;
+	transition: opacity 160ms ease;
+}
+
+.abu-pg-save__spinner {
+	position: absolute;
+	width: 16px;
+	height: 16px;
+	border-radius: 50%;
+	border: 2px solid rgba(255, 255, 255, 0.45);
+	border-top-color: #fff;
+	opacity: 0;
+	animation: abu-pg-spin 700ms linear infinite;
+}
+
+.abu-pg-save.is-sharing .abu-pg-save__label {
+	opacity: 0;
+	visibility: hidden;
+	display: none;
+}
+
+.abu-pg-save.is-sharing {
+	color: transparent;
+}
+
+.abu-pg-save.is-sharing .abu-pg-save__spinner {
+	opacity: 1;
 }
 
 .abu-pg-mute {
@@ -208,6 +244,15 @@
 	justify-content: center;
 }
 
+@keyframes abu-pg-spin {
+	from {
+		transform: rotate(0deg);
+	}
+	to {
+		transform: rotate(360deg);
+	}
+}
+
 .abu-pg-tile.is-touch .abu-pg-mute {
 	right: 84px;
 }
@@ -237,11 +282,18 @@
 	opacity: 0;
 	pointer-events: none;
 	transition: opacity 220ms ease;
+	touch-action: none;
 }
 
 .abu-pg-spotlight.is-visible {
 	opacity: 1;
 	pointer-events: auto;
+}
+
+html.abu-pg-scroll-lock,
+body.abu-pg-scroll-lock {
+	background: #f0f0f1;
+	overflow: hidden;
 }
 
 .abu-pg-spotlight-backdrop {

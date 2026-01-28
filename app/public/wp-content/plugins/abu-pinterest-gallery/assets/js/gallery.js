@@ -22,6 +22,12 @@
 
 
   const isMobileDevice = () => /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const isIOSWebKit = () => {
+    const ua = navigator.userAgent || '';
+    const isAppleMobile = /iPad|iPhone|iPod/.test(ua);
+    const isIpadOS = navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1;
+    return isAppleMobile || isIpadOS;
+  };
 
   const downloadFile = (url) => {
     const link = document.createElement('a');
@@ -33,7 +39,70 @@
     document.body.removeChild(link);
   };
 
-  const shareFile = async (url) => {
+  const attachSharePromptListener = (onPrompt) => {
+    if (!onPrompt) {
+      return () => {};
+    }
+    let fired = false;
+    const fire = () => {
+      if (fired) {
+        return;
+      }
+      fired = true;
+      onPrompt();
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        fire();
+      }
+    };
+    const handleBlur = () => {
+      setTimeout(() => {
+        const hasFocus = typeof document.hasFocus === 'function' ? document.hasFocus() : true;
+        if (document.visibilityState === 'hidden' || !hasFocus) {
+          fire();
+        }
+      }, 0);
+    };
+    const handlePageHide = () => {
+      fire();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('blur', handleBlur);
+    window.addEventListener('pagehide', handlePageHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('blur', handleBlur);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  };
+
+  const ensureSaveButtonContents = (saveBtn) => {
+    if (!saveBtn || saveBtn.querySelector('.abu-pg-save__label')) {
+      return;
+    }
+    const label = document.createElement('span');
+    label.className = 'abu-pg-save__label';
+    label.textContent = saveBtn.textContent || 'Save';
+    const spinner = document.createElement('span');
+    spinner.className = 'abu-pg-save__spinner';
+    saveBtn.textContent = '';
+    saveBtn.append(label, spinner);
+  };
+
+  const setSaveButtonLoading = (saveBtn, isLoading) => {
+    if (!saveBtn) {
+      return;
+    }
+    ensureSaveButtonContents(saveBtn);
+    saveBtn.classList.toggle('is-sharing', isLoading);
+    saveBtn.dataset.isSharing = isLoading ? 'true' : 'false';
+    saveBtn.setAttribute('aria-busy', isLoading ? 'true' : 'false');
+  };
+
+  const shareFile = async (url, options = {}) => {
+    const { onSharePrompt, onShareSettled } = options;
+    let detachPromptListener = null;
     try {
       const response = await fetch(url);
       const blob = await response.blob();
@@ -45,9 +114,21 @@
         return;
       }
 
-      await navigator.share({ files: [file], title: filename });
+      if (navigator.share) {
+        detachPromptListener = attachSharePromptListener(onSharePrompt);
+        await navigator.share({ files: [file], title: filename });
+      } else {
+        window.open(url, '_blank', 'noopener');
+      }
     } catch (error) {
       window.open(url, '_blank', 'noopener');
+    } finally {
+      if (detachPromptListener) {
+        detachPromptListener();
+      }
+      if (onShareSettled) {
+        onShareSettled();
+      }
     }
   };
 
@@ -394,18 +475,26 @@
     }
     state.scrollLocked = true;
     state.scrollY = window.scrollY || window.pageYOffset || 0;
-    document.body.style.position = 'fixed';
-    document.body.style.top = `-${state.scrollY}px`;
-    document.body.style.width = '100%';
+    document.documentElement.classList.add('abu-pg-scroll-lock');
+    document.body.classList.add('abu-pg-scroll-lock');
+    if (!state.isIOSWebKit) {
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${state.scrollY}px`;
+      document.body.style.width = '100%';
+    }
   };
 
   const unlockScroll = (state) => {
     if (!state.scrollLocked) {
       return;
     }
-    document.body.style.position = '';
-    document.body.style.top = '';
-    document.body.style.width = '';
+    document.documentElement.classList.remove('abu-pg-scroll-lock');
+    document.body.classList.remove('abu-pg-scroll-lock');
+    if (!state.isIOSWebKit) {
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.width = '';
+    }
     window.scrollTo(0, state.scrollY || 0);
     state.scrollLocked = false;
   };
@@ -416,6 +505,15 @@
     const backdrop = document.createElement('div');
     backdrop.className = 'abu-pg-spotlight-backdrop';
     overlay.appendChild(backdrop);
+    if (state.isIOSWebKit) {
+      overlay.addEventListener(
+        'touchmove',
+        (event) => {
+          event.preventDefault();
+        },
+        { passive: false }
+      );
+    }
     document.body.appendChild(overlay);
     state.spotlight = {
       overlay,
@@ -466,15 +564,22 @@
       saveBtn = document.createElement('button');
       saveBtn.type = 'button';
       saveBtn.className = 'abu-pg-save';
-      saveBtn.textContent = 'Save';
       tile.appendChild(saveBtn);
     }
     if (saveBtn) {
+      ensureSaveButtonContents(saveBtn);
       saveBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
+        if (saveBtn.dataset.isSharing === 'true') {
+          return;
+        }
         if (item.url) {
-          shareFile(item.url);
+          setSaveButtonLoading(saveBtn, true);
+          shareFile(item.url, {
+            onSharePrompt: () => setSaveButtonLoading(saveBtn, false),
+            onShareSettled: () => setSaveButtonLoading(saveBtn, false),
+          });
         }
       });
     }
@@ -676,8 +781,7 @@
       }
     });
 
-    lockScroll(state);
-    requestAnimationFrame(() => {
+    const startAnimation = () => {
       overlay.classList.add('is-visible');
       const dx = target.left - rect.left;
       const dy = target.top - rect.top;
@@ -692,7 +796,20 @@
         }
         // #endregion agent log
       }
-    });
+    };
+    if (state.isIOSWebKit) {
+      requestAnimationFrame(() => {
+        startAnimation();
+        requestAnimationFrame(() => {
+          lockScroll(state);
+        });
+      });
+    } else {
+      lockScroll(state);
+      requestAnimationFrame(() => {
+        startAnimation();
+      });
+    }
 
     const onTransitionEnd = () => {
       clone.removeEventListener('transitionend', onTransitionEnd);
@@ -1068,7 +1185,6 @@
           const saveBtn = document.createElement('button');
           saveBtn.type = 'button';
           saveBtn.className = 'abu-pg-save';
-          saveBtn.textContent = 'Save';
           tile.appendChild(saveBtn);
         }
       } else if (existingSave) {
@@ -1076,6 +1192,13 @@
       }
     } else if (existingSave) {
       existingSave.remove();
+    }
+
+    if (state.isTouch && isSpotlight) {
+      const spotlightSave = tile.querySelector('.abu-pg-save');
+      if (spotlightSave) {
+        ensureSaveButtonContents(spotlightSave);
+      }
     }
 
     return tile;
@@ -1259,6 +1382,7 @@
       },
       isTouch: window.matchMedia && window.matchMedia('(hover: none)').matches,
       isSpotlightEnabled: window.matchMedia && window.matchMedia('(pointer: coarse)').matches,
+      isIOSWebKit: isIOSWebKit(),
       debug: isDebugEnabled(),
       scrollLocked: false,
       scrollY: 0,
