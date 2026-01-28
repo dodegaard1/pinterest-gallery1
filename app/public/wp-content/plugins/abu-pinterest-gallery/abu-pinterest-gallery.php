@@ -464,4 +464,3 @@ function abu_pg_shortcode() {
 	return ob_get_clean();
 }
 add_shortcode( 'abu_pinterest_gallery', 'abu_pg_shortcode' ); 
-#TESTING TESTING 
