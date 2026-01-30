@@ -281,6 +281,188 @@
     }
   };
 
+  /**
+   * Create and update performance overlay
+   * Shows: tiles rendered, images loaded, videos loaded, chunk count
+   */
+  const createPerformanceOverlay = () => {
+    let overlay = document.getElementById('abu-pg-perf-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'abu-pg-perf-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.85);
+        color: #0f0;
+        padding: 12px 16px;
+        border-radius: 6px;
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.6;
+        z-index: 999999;
+        pointer-events: none;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+      `;
+      document.body.appendChild(overlay);
+    }
+    return overlay;
+  };
+
+  const updatePerformanceOverlay = (state) => {
+    if (!state.debug) return;
+    
+    const overlay = createPerformanceOverlay();
+    const container = state.container;
+    
+    // Count rendered tiles
+    const tiles = container.querySelectorAll('.abu-pg-tile');
+    const tilesCount = tiles.length;
+    
+    // Count images with src attached (loaded or loading)
+    let imagesLoaded = 0;
+    tiles.forEach(tile => {
+      const img = tile.querySelector('img');
+      if (img && img.src && !img.dataset.src) {
+        imagesLoaded++;
+      }
+    });
+    
+    // Count videos with src attached (loaded or loading)
+    let videosLoaded = 0;
+    tiles.forEach(tile => {
+      const video = tile.querySelector('video');
+      if (video) {
+        const source = video.querySelector('source');
+        if ((source && source.src) || video.src) {
+          videosLoaded++;
+        }
+      }
+    });
+    
+    // Calculate chunk count
+    const chunkCount = Math.ceil(state.visibleCount / state.chunkSize);
+    
+    overlay.innerHTML = `
+      <div style="font-weight: bold; margin-bottom: 8px; color: #fff;">ABU Gallery Performance</div>
+      <div>Tiles Rendered: <span style="color: #0ff;">${tilesCount}</span></div>
+      <div>Images Loaded: <span style="color: #0f0;">${imagesLoaded}</span> / ${tilesCount}</div>
+      <div>Videos Loaded: <span style="color: #f0f;">${videosLoaded}</span></div>
+      <div>Chunks: <span style="color: #ff0;">${chunkCount}</span></div>
+      <div>Visible Count: <span style="color: #fff;">${state.visibleCount}</span></div>
+      <div>Total Items: <span style="color: #fff;">${state.allItems.length}</span></div>
+    `;
+  };
+
+  /**
+   * Show desktop download popover with Web and Print options
+   */
+  const showDesktopDownloadPopover = (button, item) => {
+    // Remove any existing popover
+    const existingPopover = document.querySelector('.abu-pg-download-popover');
+    if (existingPopover) {
+      existingPopover.remove();
+    }
+    
+    const popover = document.createElement('div');
+    popover.className = 'abu-pg-download-popover';
+    
+    const webBtn = document.createElement('button');
+    webBtn.type = 'button';
+    webBtn.className = 'abu-pg-download-option';
+    webBtn.textContent = 'Web';
+    webBtn.title = 'Download high-quality version for sharing';
+    
+    const printBtn = document.createElement('button');
+    printBtn.type = 'button';
+    printBtn.className = 'abu-pg-download-option';
+    printBtn.textContent = 'Print';
+    printBtn.title = 'Download original for print/archival';
+    
+    popover.appendChild(webBtn);
+    popover.appendChild(printBtn);
+    
+    // Position popover relative to button
+    const updatePosition = () => {
+      const rect = button.getBoundingClientRect();
+      popover.style.position = 'fixed';
+      popover.style.top = `${rect.bottom + 8}px`;
+      popover.style.left = `${rect.left + rect.width / 2}px`;
+      popover.style.transform = 'translateX(-50%)';
+      popover.style.zIndex = '10000';
+    };
+    
+    updatePosition();
+    document.body.appendChild(popover);
+    
+    // Track if user has ever hovered the popover
+    let hasHoveredPopover = false;
+    
+    // Hover listeners for popover
+    popover.addEventListener('mouseenter', () => {
+      hasHoveredPopover = true;
+    });
+    
+    popover.addEventListener('mouseleave', () => {
+      // Only close on hover out if user has hovered it
+      if (hasHoveredPopover) {
+        popover.remove();
+        cleanup();
+      }
+    });
+    
+    // Update position on scroll to keep it below button
+    const handleScroll = () => {
+      updatePosition();
+    };
+    
+    window.addEventListener('scroll', handleScroll, true); // Use capture to catch all scroll events
+    
+    // Add click event listeners for options
+    webBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const webUrl = item.webUrl || item.url;
+      if (webUrl) {
+        downloadFile(webUrl);
+      }
+      popover.remove();
+      cleanup();
+    });
+    
+    printBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const originalUrl = item.originalUrl || item.url;
+      if (originalUrl) {
+        downloadFile(originalUrl);
+      }
+      popover.remove();
+      cleanup();
+    });
+    
+    // Close popover on any click event (including other buttons)
+    const closeOnAnyClick = (e) => {
+      // Don't close if clicking inside the popover (on the option buttons)
+      if (!popover.contains(e.target)) {
+        popover.remove();
+        cleanup();
+      }
+    };
+    
+    // Cleanup function to remove all listeners
+    const cleanup = () => {
+      window.removeEventListener('scroll', handleScroll, true);
+      document.removeEventListener('click', closeOnAnyClick, true);
+    };
+    
+    // Delay adding click listener to avoid immediate close from the download button click
+    setTimeout(() => {
+      document.addEventListener('click', closeOnAnyClick, true);
+    }, 10);
+  };
+
   const pickVideoSource = (video) => {
     const original = getVideoDataAttr(video, 'data-src-original', 'srcOriginal');
     const src360 = getVideoDataAttr(video, 'data-src-360', 'src360');
@@ -923,8 +1105,17 @@
       downloadBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (item.url) {
-          handleDownload(item.url);
+        
+        // Desktop: show popover with Web/Print options
+        // Mobile: direct download of original
+        if (!state.isTouch) {
+          showDesktopDownloadPopover(downloadBtn, item);
+        } else {
+          // Mobile: download original directly
+          const downloadUrl = item.originalUrl || item.url;
+          if (downloadUrl) {
+            handleDownload(downloadUrl);
+          }
         }
       });
     }
@@ -938,15 +1129,22 @@
     }
     if (saveBtn) {
       ensureSaveButtonContents(saveBtn);
+      // Update button label to "Share" for clarity
+      const label = saveBtn.querySelector('.abu-pg-save__label');
+      if (label) {
+        label.textContent = 'Share';
+      }
       saveBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         if (saveBtn.dataset.isSharing === 'true') {
           return;
         }
-        if (item.url) {
+        // Use web variant for sharing (good balance of quality and file size)
+        const shareUrl = item.webUrl || item.url;
+        if (shareUrl) {
           setSaveButtonLoading(saveBtn, true);
-          shareFile(item.url, {
+          shareFile(shareUrl, {
             onSharePrompt: () => setSaveButtonLoading(saveBtn, false),
             onShareSettled: () => setSaveButtonLoading(saveBtn, false),
           });
@@ -1355,6 +1553,13 @@
         srcset: img ? img.getAttribute('srcset') || '' : '',
         sizes: img ? img.getAttribute('sizes') || '' : '',
         previewSrc,
+        // Image variant URLs (grid, web, original)
+        gridUrl: tile.dataset.gridUrl || '',
+        webUrl: tile.dataset.webUrl || '',
+        originalUrl: tile.dataset.originalUrl || tile.dataset.url || '',
+        gridSrcset: tile.dataset.gridSrcset || '',
+        gridSizes: tile.dataset.gridSizes || '(max-width: 600px) 50vw, 280px',
+        // Video source URLs
         srcOriginal: getVideoDataAttr(video, 'data-src-original', 'srcOriginal'),
         src360: getVideoDataAttr(video, 'data-src-360', 'src360'),
         src720: getVideoDataAttr(video, 'data-src-720', 'src720'),
@@ -1413,18 +1618,28 @@
       img.removeAttribute('src');
       img.removeAttribute('srcset');
       img.removeAttribute('sizes');
-      img.dataset.src = item.url;
-      if (item.srcset) {
-        img.dataset.srcset = item.srcset;
+      
+      // Use appropriate variant based on context
+      // Grid: use gridUrl (small, optimized for masonry)
+      // Spotlight: use webUrl (high quality for viewing/sharing)
+      const imageUrl = isSpotlight 
+        ? (item.webUrl || item.url) 
+        : (item.gridUrl || item.url);
+      const imageSrcset = isSpotlight ? '' : (item.gridSrcset || '');
+      const imageSizes = isSpotlight ? '' : (item.gridSizes || '');
+      
+      img.dataset.src = imageUrl;
+      if (imageSrcset) {
+        img.dataset.srcset = imageSrcset;
       }
-      if (item.sizes) {
-        img.dataset.sizes = item.sizes;
+      if (imageSizes) {
+        img.dataset.sizes = imageSizes;
       }
       img.alt = '';
-      img.loading = 'lazy';
       img.decoding = 'async';
       if (isSpotlight) {
-        img.src = item.url;
+        // In spotlight, attach src immediately for fast display
+        img.src = imageUrl;
         img.removeAttribute('srcset');
         img.removeAttribute('sizes');
         delete img.dataset.src;
@@ -1600,7 +1815,13 @@
 
     const downloadBtn = tile.querySelector('.abu-pg-download');
     if (downloadBtn) {
-      if (state.isTouch) {
+      // Show download button on both mobile and desktop in spotlight
+      // Mobile: downloads original for print/high-quality
+      // Desktop: downloads original as well
+      if (isSpotlight) {
+        downloadBtn.style.display = '';
+      } else if (state.isTouch) {
+        // Hide in grid on mobile (only show in spotlight)
         downloadBtn.remove();
       } else {
         downloadBtn.style.display = '';
@@ -1782,15 +2003,14 @@
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'abu-pg-desktop-spotlight-save-btn';
-    saveBtn.textContent = 'Save';
+    saveBtn.textContent = 'Download';
     buttonsRight.appendChild(saveBtn);
     
     saveBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      if (item.url) {
-        downloadFile(item.url);
-      }
+      // Show popover with Web/Print options
+      showDesktopDownloadPopover(saveBtn, item);
     });
     
     buttonsTop.appendChild(buttonsLeft);
@@ -1938,15 +2158,16 @@
         switchDesktopSpotlightMedia(state, item);
       });
       
-      // Attach download button event listener
+      // Attach download button event listener (desktop spotlight right column)
       const downloadBtn = tile.querySelector('.abu-pg-download');
       if (downloadBtn) {
         downloadBtn.addEventListener('click', (event) => {
           event.preventDefault();
           event.stopPropagation();
-          if (item.url) {
-            handleDownload(item.url);
-          }
+          
+          // Desktop spotlight: show popover with Web/Print options
+          showDesktopDownloadPopover(downloadBtn, item);
+          
           // Blur the button to remove focus state and allow hover state to clear
           downloadBtn.blur();
           tile.blur();
@@ -2138,8 +2359,17 @@
       downloadBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (item.url) {
-          handleDownload(item.url);
+        
+        // Desktop: show popover with Web/Print options
+        // Mobile: direct download of original
+        if (!state.isTouch) {
+          showDesktopDownloadPopover(downloadBtn, item);
+        } else {
+          // Mobile: download original directly
+          const downloadUrl = item.originalUrl || item.url;
+          if (downloadUrl) {
+            handleDownload(downloadUrl);
+          }
         }
       });
     }
@@ -2322,6 +2552,11 @@
       state.container.appendChild(state.sentinel);
     }
     layoutMasonry(state.container, items, state.layoutConfig);
+    
+    // Update performance overlay if debug is enabled
+    if (state.debug) {
+      requestAnimationFrame(() => updatePerformanceOverlay(state));
+    }
   };
 
   const renderChunk = (state) => {
@@ -2398,8 +2633,11 @@
     };
 
     if ('IntersectionObserver' in window) {
+      // Configure lazy loading with buffer zone (~2 viewport heights)
+      // This preloads images before they enter viewport for smoother scrolling
       state.imageObserver = new IntersectionObserver(
         (entries) => {
+          let shouldUpdateOverlay = false;
           entries.forEach((entry) => {
             if (entry.isIntersecting) {
               const img = entry.target;
@@ -2411,19 +2649,23 @@
                 if (img.dataset.sizes) {
                   img.sizes = img.dataset.sizes;
                 }
-                img.loading = 'lazy';
                 img.decoding = 'async';
                 delete img.dataset.src;
                 delete img.dataset.srcset;
                 delete img.dataset.sizes;
+                shouldUpdateOverlay = true;
               }
               state.imageObserver.unobserve(img);
             }
           });
+          // Update performance overlay if debug is enabled
+          if (shouldUpdateOverlay && state.debug) {
+            requestAnimationFrame(() => updatePerformanceOverlay(state));
+          }
         },
         {
           root: null,
-          rootMargin: '800px 0px',
+          rootMargin: '1000px 0px', // 1000px buffer above and below viewport
           threshold: 0.01,
         }
       );

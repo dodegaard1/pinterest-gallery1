@@ -13,6 +13,23 @@ define( 'ABU_PG_URL', plugin_dir_url( __FILE__ ) );
 define( 'ABU_PG_META_KEY', '_abu_gallery_media_ids' );
 define( 'ABU_PG_DEBUG_LOG_PATH', '/Users/danielodegaard/Local Sites/abu-dev/.cursor/debug.log' );
 
+/**
+ * Register custom image sizes for grid/web variants.
+ * Grid: optimized for masonry tiles (smaller, faster)
+ * Web: higher quality for spotlight and sharing
+ * Original: full-res source for print/download
+ */
+function abu_pg_register_image_sizes() {
+	// Grid size: optimized for masonry tiles (~280px display width)
+	// Use 2x for retina = ~560px, rounded up to 600px for safety
+	add_image_size( 'abu_grid', 600, 0, false ); // width, height (0 = maintain aspect), no crop
+	
+	// Web size: high quality for spotlight and sharing
+	// Good balance between quality and file size
+	add_image_size( 'abu_web', 2048, 0, false );
+}
+add_action( 'after_setup_theme', 'abu_pg_register_image_sizes' );
+
 if ( ! function_exists( 'your_plugin_icon' ) ) {
 	function your_plugin_icon( $name, $class = '' ) {
 		$name = sanitize_file_name( $name );
@@ -82,9 +99,9 @@ function abu_pg_register_assets() {
 		'abu-pg-gallery',
 		ABU_PG_URL . 'assets/css/gallery.css',
 		array(),
-		'0.3.6'
+		'0.4.0' // Updated: added download popover styles
 	);
-	$gallery_version = '0.6.0';
+	$gallery_version = '0.7.3'; // Updated: variant system + lazy loading + performance overlay + true original URLs (no -scaled)
 	$debug_enabled = isset( $_GET['abu_pg_debug'] ) && '0' !== sanitize_text_field( wp_unslash( $_GET['abu_pg_debug'] ) );
 	if ( is_user_logged_in() || $debug_enabled ) {
 		$gallery_version .= '-' . time();
@@ -108,7 +125,7 @@ function abu_pg_register_assets() {
 		'abu-pg-chapters',
 		ABU_PG_URL . 'assets/js/abu-chapters.js',
 		array(),
-		'1.0.0',
+		'1.1.0',
 		true
 	);
 }
@@ -122,6 +139,36 @@ require_once ABU_PG_PATH . 'gallery-maker/index.php';
 // Legacy admin enqueue removed - ABU Gallery Maker block handles its own assets
 
 // Legacy meta box removed - use ABU Gallery Maker block instead
+
+/**
+ * Generate a URL-safe slug from chapter name.
+ * 
+ * @param string $chapter_name The chapter name.
+ * @return string URL-safe slug.
+ */
+function abu_pg_generate_chapter_slug( $chapter_name ) {
+	// Convert to lowercase
+	$slug = strtolower( $chapter_name );
+	
+	// Replace spaces with dashes
+	$slug = preg_replace( '/\s+/', '-', $slug );
+	
+	// Remove any character that isn't alphanumeric, dash, or underscore
+	$slug = preg_replace( '/[^a-z0-9\-_]/', '', $slug );
+	
+	// Remove multiple consecutive dashes
+	$slug = preg_replace( '/-+/', '-', $slug );
+	
+	// Remove leading/trailing dashes
+	$slug = trim( $slug, '-' );
+	
+	// Fallback if slug is empty
+	if ( empty( $slug ) ) {
+		$slug = 'chapter';
+	}
+	
+	return $slug;
+}
 
 /**
  * Parse and validate chapter JSON data.
@@ -141,6 +188,7 @@ function abu_pg_parse_chapters( $json_string ) {
 	}
 	
 	$validated = array();
+	$used_slugs = array(); // Track used slugs to prevent collisions
 	
 	foreach ( $chapters as $chapter ) {
 		if ( ! is_array( $chapter ) ) {
@@ -152,10 +200,24 @@ function abu_pg_parse_chapters( $json_string ) {
 			continue;
 		}
 		
+		// Generate slug from name
+		$base_slug = abu_pg_generate_chapter_slug( $chapter['name'] );
+		$slug = $base_slug;
+		$counter = 2;
+		
+		// Handle slug collisions by appending a number
+		while ( in_array( $slug, $used_slugs, true ) ) {
+			$slug = $base_slug . '-' . $counter;
+			$counter++;
+		}
+		
+		$used_slugs[] = $slug;
+		
 		// Sanitize chapter data
 		$clean_chapter = array(
 			'id'       => sanitize_key( $chapter['id'] ),
 			'name'     => sanitize_text_field( $chapter['name'] ),
+			'slug'     => $slug,
 			'order'    => isset( $chapter['order'] ) ? absint( $chapter['order'] ) : 0,
 			'mediaIds' => array(),
 		);
@@ -177,6 +239,91 @@ function abu_pg_parse_chapters( $json_string ) {
 	}
 	
 	return ! empty( $validated ) ? $validated : false;
+}
+
+/**
+ * Get the true original image URL, bypassing WordPress's "-scaled" version.
+ * 
+ * WordPress creates "-scaled" versions of large images (>2560px). This function
+ * uses the WordPress API to get the actual original file if it exists.
+ * 
+ * @param int $id Attachment ID.
+ * @return string Original image URL.
+ */
+function abu_pg_get_original_image_url( $id ) {
+	// Check attachment metadata for original_image key (WordPress 5.3+)
+	$metadata = wp_get_attachment_metadata( $id );
+	
+	if ( ! empty( $metadata['original_image'] ) ) {
+		// Original unscaled image exists
+		$upload_dir = wp_upload_dir();
+		$file_path = get_attached_file( $id );
+		
+		if ( $file_path ) {
+			// Replace the scaled filename with the original filename
+			$original_file_path = str_replace( wp_basename( $file_path ), $metadata['original_image'], $file_path );
+			
+			// Convert file path to URL
+			$original_url = str_replace( $upload_dir['basedir'], $upload_dir['baseurl'], $original_file_path );
+			return $original_url;
+		}
+	}
+	
+	// No original_image metadata exists, return the standard attachment URL
+	// (this is already the original for images that weren't scaled)
+	return wp_get_attachment_url( $id );
+}
+
+/**
+ * Get image variant URLs (grid, web, original) with fallbacks.
+ * 
+ * @param int $id Attachment ID.
+ * @return array Array with 'grid_url', 'web_url', 'original_url', 'grid_srcset', 'grid_sizes'.
+ */
+function abu_pg_get_image_variants( $id ) {
+	$variants = array(
+		'grid_url'     => '',
+		'web_url'      => '',
+		'original_url' => '',
+		'grid_srcset'  => '',
+		'grid_sizes'   => '(max-width: 600px) 50vw, 280px',
+	);
+	
+	// Grid variant (for masonry tiles)
+	$grid_image = wp_get_attachment_image_src( $id, 'abu_grid' );
+	if ( $grid_image && ! empty( $grid_image[0] ) ) {
+		$variants['grid_url'] = $grid_image[0];
+	} else {
+		// Fallback to medium_large if abu_grid doesn't exist yet
+		$fallback = wp_get_attachment_image_src( $id, 'medium_large' );
+		$variants['grid_url'] = $fallback && ! empty( $fallback[0] ) ? $fallback[0] : '';
+	}
+	
+	// Web variant (for spotlight and sharing)
+	$web_image = wp_get_attachment_image_src( $id, 'abu_web' );
+	if ( $web_image && ! empty( $web_image[0] ) ) {
+		$variants['web_url'] = $web_image[0];
+	} else {
+		// Fallback to 2048 size if abu_web doesn't exist yet
+		$fallback = wp_get_attachment_image_src( $id, '2048x2048' );
+		if ( ! $fallback || empty( $fallback[0] ) ) {
+			// Fallback to large
+			$fallback = wp_get_attachment_image_src( $id, 'large' );
+		}
+		$variants['web_url'] = $fallback && ! empty( $fallback[0] ) ? $fallback[0] : '';
+	}
+	
+	// Original (full-res source) - get TRUE original, not scaled version
+	$variants['original_url'] = abu_pg_get_original_image_url( $id );
+	
+	// Generate srcset for grid size
+	$srcset = wp_get_attachment_image_srcset( $id, 'abu_grid' );
+	if ( ! $srcset ) {
+		$srcset = wp_get_attachment_image_srcset( $id, 'medium_large' );
+	}
+	$variants['grid_srcset'] = $srcset ? $srcset : '';
+	
+	return $variants;
 }
 
 /**
@@ -306,17 +453,24 @@ function abu_pg_render_tile( $id, $debug_enabled = false ) {
 			}
 		}
 	} else {
-		// Get dimensions from the actual medium_large size being rendered
-		$image_src = wp_get_attachment_image_src( $id, 'medium_large' );
+		// Get dimensions from the abu_grid size being rendered
+		$image_src = wp_get_attachment_image_src( $id, 'abu_grid' );
 		if ( $image_src && ! empty( $image_src[1] ) && ! empty( $image_src[2] ) ) {
 			$media_width  = absint( $image_src[1] );
 			$media_height = absint( $image_src[2] );
 		} else {
-			// Fallback to full size metadata
-			$meta = wp_get_attachment_metadata( $id );
-			if ( is_array( $meta ) && ! empty( $meta['width'] ) && ! empty( $meta['height'] ) ) {
-				$media_width  = absint( $meta['width'] );
-				$media_height = absint( $meta['height'] );
+			// Fallback to medium_large if abu_grid doesn't exist yet
+			$image_src = wp_get_attachment_image_src( $id, 'medium_large' );
+			if ( $image_src && ! empty( $image_src[1] ) && ! empty( $image_src[2] ) ) {
+				$media_width  = absint( $image_src[1] );
+				$media_height = absint( $image_src[2] );
+			} else {
+				// Final fallback to full size metadata
+				$meta = wp_get_attachment_metadata( $id );
+				if ( is_array( $meta ) && ! empty( $meta['width'] ) && ! empty( $meta['height'] ) ) {
+					$media_width  = absint( $meta['width'] );
+					$media_height = absint( $meta['height'] );
+				}
 			}
 		}
 	}
@@ -332,6 +486,17 @@ function abu_pg_render_tile( $id, $debug_enabled = false ) {
 		'720'    => $video_720_id,
 	);
 	
+	// Get image variants for images
+	$image_variants = array();
+	if ( $is_image ) {
+		$image_variants = abu_pg_get_image_variants( $id );
+	}
+	
+	// Get true original URL (handles WordPress "-scaled" versions for both images and videos)
+	$original_url = $is_image 
+		? ( ! empty( $image_variants['original_url'] ) ? $image_variants['original_url'] : $url )
+		: abu_pg_get_original_image_url( $id ); // Videos can also have scaled versions
+	
 	ob_start();
 	?>
 	<div class="abu-pg-tile"
@@ -343,6 +508,11 @@ function abu_pg_render_tile( $id, $debug_enabled = false ) {
 		<?php if ( $title ) : ?>data-title="<?php echo esc_attr( $title ); ?>"<?php endif; ?>
 		<?php if ( $media_width ) : ?>data-width="<?php echo esc_attr( $media_width ); ?>"<?php endif; ?>
 		<?php if ( $media_height ) : ?>data-height="<?php echo esc_attr( $media_height ); ?>"<?php endif; ?>
+		data-original-url="<?php echo esc_url( $original_url ); ?>"
+		<?php if ( $is_image && ! empty( $image_variants['grid_url'] ) ) : ?>data-grid-url="<?php echo esc_url( $image_variants['grid_url'] ); ?>"<?php endif; ?>
+		<?php if ( $is_image && ! empty( $image_variants['web_url'] ) ) : ?>data-web-url="<?php echo esc_url( $image_variants['web_url'] ); ?>"<?php endif; ?>
+		<?php if ( $is_image && ! empty( $image_variants['grid_srcset'] ) ) : ?>data-grid-srcset="<?php echo esc_attr( $image_variants['grid_srcset'] ); ?>"<?php endif; ?>
+		<?php if ( $is_image && ! empty( $image_variants['grid_sizes'] ) ) : ?>data-grid-sizes="<?php echo esc_attr( $image_variants['grid_sizes'] ); ?>"<?php endif; ?>
 		<?php if ( $debug_enabled && $is_video ) : ?>
 			data-abu-meta-360="<?php echo esc_attr( $debug_meta['360'] ); ?>"
 			data-abu-meta-720="<?php echo esc_attr( $debug_meta['720'] ); ?>"
@@ -353,17 +523,20 @@ function abu_pg_render_tile( $id, $debug_enabled = false ) {
 		<?php endif; ?>>
 	<?php if ( $is_image ) : ?>
 		<?php
-		echo wp_get_attachment_image(
-			$id,
-			'medium_large',
-			false,
-			array(
-				'loading'  => 'lazy',
-				'decoding' => 'async',
-				'sizes'    => '(max-width: 600px) 50vw, 280px',
-			)
-		);
+		// Use true lazy loading: data-src instead of src
+		// IntersectionObserver will attach src when near viewport
+		$alt_text = get_post_meta( $id, '_wp_attachment_image_alt', true );
 		?>
+		<img 
+			class="abu-pg-image"
+			data-src="<?php echo esc_url( $image_variants['grid_url'] ); ?>"
+			<?php if ( ! empty( $image_variants['grid_srcset'] ) ) : ?>data-srcset="<?php echo esc_attr( $image_variants['grid_srcset'] ); ?>"<?php endif; ?>
+			<?php if ( ! empty( $image_variants['grid_sizes'] ) ) : ?>data-sizes="<?php echo esc_attr( $image_variants['grid_sizes'] ); ?>"<?php endif; ?>
+			alt="<?php echo esc_attr( $alt_text ); ?>"
+			width="<?php echo esc_attr( $media_width ); ?>"
+			height="<?php echo esc_attr( $media_height ); ?>"
+			decoding="async"
+		>
 	<?php else : ?>
 			<video class="abu-pg-video" playsinline preload="metadata"
 				data-src-original="<?php echo esc_url( $url ); ?>"
@@ -467,9 +640,10 @@ function abu_pg_shortcode() {
 		<nav class="abu-pg-chapters-nav" aria-label="Gallery chapters">
 			<div class="abu-pg-chapters-nav-inner">
 				<?php foreach ( $chapters as $chapter ) : ?>
-					<a href="#abu-chapter-<?php echo esc_attr( $chapter['id'] ); ?>" 
+					<a href="#<?php echo esc_attr( $chapter['slug'] ); ?>" 
 					   class="abu-pg-chapter-link" 
-					   data-chapter-id="<?php echo esc_attr( $chapter['id'] ); ?>">
+					   data-chapter-id="<?php echo esc_attr( $chapter['id'] ); ?>"
+					   data-chapter-slug="<?php echo esc_attr( $chapter['slug'] ); ?>">
 						<?php echo esc_html( $chapter['name'] ); ?>
 					</a>
 				<?php endforeach; ?>
@@ -479,9 +653,10 @@ function abu_pg_shortcode() {
 		<!-- Chapter Sections -->
 		<div class="abu-pg-chapters-content">
 			<?php foreach ( $chapters as $index => $chapter ) : ?>
-				<section id="abu-chapter-<?php echo esc_attr( $chapter['id'] ); ?>" 
+				<section id="<?php echo esc_attr( $chapter['slug'] ); ?>" 
 				         class="abu-pg-chapter-section" 
-				         data-chapter-id="<?php echo esc_attr( $chapter['id'] ); ?>">
+				         data-chapter-id="<?php echo esc_attr( $chapter['id'] ); ?>"
+				         data-chapter-slug="<?php echo esc_attr( $chapter['slug'] ); ?>">
 					
 					<!-- Masonry grid for this chapter -->
 					<div class="abu-pg-gallery" data-post-id="<?php echo esc_attr( $post_id ); ?>" data-column-width="280" data-gutter="16" data-chapter-id="<?php echo esc_attr( $chapter['id'] ); ?>">

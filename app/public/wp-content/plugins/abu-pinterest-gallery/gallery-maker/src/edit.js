@@ -4,15 +4,121 @@
 import { useState, useEffect } from '@wordpress/element';
 import { useEntityProp } from '@wordpress/core-data';
 import { useSelect } from '@wordpress/data';
-import { Button, TextControl, Placeholder, Spinner } from '@wordpress/components';
+import { Button, TextControl, Placeholder, Spinner, Modal } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import { store as editorStore } from '@wordpress/editor';
 import { store as blockEditorStore } from '@wordpress/block-editor';
 
 /**
+ * dnd-kit dependencies
+ */
+import {
+	DndContext,
+	closestCenter,
+	PointerSensor,
+	useSensor,
+	useSensors,
+} from '@dnd-kit/core';
+import {
+	arrayMove,
+	SortableContext,
+	rectSortingStrategy,
+	useSortable,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+
+/**
+ * Sortable media item component
+ */
+function SortableMediaItem( { mediaId, media, removeMedia, onView } ) {
+	const {
+		attributes,
+		listeners,
+		setNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable( { id: mediaId } );
+
+	const style = {
+		transform: CSS.Transform.toString( transform ),
+		transition,
+		opacity: isDragging ? 0.5 : 1,
+	};
+
+	if ( ! media ) {
+		return (
+			<div ref={ setNodeRef } style={ style } className="abu-gallery-maker__media-item">
+				<Spinner />
+			</div>
+		);
+	}
+
+	if ( media === null ) {
+		return (
+			<div ref={ setNodeRef } style={ style } className="abu-gallery-maker__media-item abu-gallery-maker__media-item--invalid">
+				<div className="abu-gallery-maker__media-placeholder">
+					{ __( 'Invalid media', 'abu-pinterest-gallery' ) }
+				</div>
+				<Button
+					isDestructive
+					isSmall
+					onClick={ () => removeMedia( mediaId ) }
+					className="abu-gallery-maker__remove"
+				>
+					×
+				</Button>
+			</div>
+		);
+	}
+
+	const thumbnailUrl = media.sizes?.thumbnail?.source_url || media.sizes?.thumbnail?.url || media.url;
+	const isVideo = media.mime?.startsWith( 'video/' );
+
+	return (
+		<div
+			ref={ setNodeRef }
+			style={ style }
+			className="abu-gallery-maker__media-item"
+			{ ...attributes }
+			{ ...listeners }
+		>
+			<div 
+				className="abu-gallery-maker__media-preview"
+				onClick={ ( e ) => {
+					e.stopPropagation();
+					onView();
+				} }
+				style={ { cursor: 'pointer' } }
+			>
+				{ isVideo ? (
+					<div className="abu-gallery-maker__media-video">
+						<video src={ media.url } />
+						<span className="abu-gallery-maker__media-video-icon">▶</span>
+					</div>
+				) : (
+					<img src={ thumbnailUrl } alt={ media.title } />
+				) }
+			</div>
+			<div className="abu-gallery-maker__media-title">
+				{ media.title || media.filename }
+			</div>
+			<Button
+				isDestructive
+				isSmall
+				onClick={ () => removeMedia( mediaId ) }
+				className="abu-gallery-maker__remove"
+			>
+				×
+			</Button>
+		</div>
+	);
+}
+
+/**
  * Edit component for ABU Gallery Maker block.
  * 
- * Provides a two-column UI:
+ * Provides a full-screen modal editor with two-column UI:
  * - Left sidebar: Chapter list with add/select/rename
  * - Right pane: Media grid with add/reorder capabilities
  * 
@@ -20,6 +126,8 @@ import { store as blockEditorStore } from '@wordpress/block-editor';
  * @return {JSX.Element} Edit component
  */
 export default function Edit( { clientId } ) {
+	// Modal state
+	const [ isModalOpen, setIsModalOpen ] = useState( false );
 	// Get post type and post ID
 	const postType = useSelect( ( select ) => 
 		select( editorStore ).getCurrentPostType(),
@@ -47,8 +155,17 @@ export default function Edit( { clientId } ) {
 	const [ selectedChapterId, setSelectedChapterId ] = useState( 
 		chapters.length > 0 ? chapters[0].id : null 
 	);
-	const [ draggedMediaIndex, setDraggedMediaIndex ] = useState( null );
 	const [ mediaData, setMediaData ] = useState( {} ); // Cache for attachment data
+	const [ lightboxMedia, setLightboxMedia ] = useState( null ); // Media to display in lightbox
+
+	// dnd-kit sensors
+	const sensors = useSensors(
+		useSensor( PointerSensor, {
+			activationConstraint: {
+				distance: 8, // 8px movement required to start drag
+			},
+		} )
+	);
 	
 	// Initialize with one chapter if empty
 	useEffect( () => {
@@ -156,36 +273,25 @@ export default function Edit( { clientId } ) {
 		updateChapters( updated );
 	};
 	
-	// Drag and drop handlers
-	const handleDragStart = ( index ) => {
-		setDraggedMediaIndex( index );
-	};
-	
-	const handleDragOver = ( e ) => {
-		e.preventDefault();
-	};
-	
-	const handleDrop = ( dropIndex ) => {
-		if ( draggedMediaIndex === null || ! currentChapter ) return;
-		
-		const mediaIds = [ ...currentChapter.mediaIds ];
-		const draggedId = mediaIds[ draggedMediaIndex ];
-		
-		// Remove from old position
-		mediaIds.splice( draggedMediaIndex, 1 );
-		
-		// Insert at new position
-		mediaIds.splice( dropIndex, 0, draggedId );
-		
-		// Update chapter
-		const updated = chapters.map( ch => 
-			ch.id === currentChapter.id 
-				? { ...ch, mediaIds }
+	// Drag and drop handler for dnd-kit
+	const handleDragEnd = ( event ) => {
+		const { active, over } = event;
+
+		if ( ! over || ! currentChapter || active.id === over.id ) {
+			return;
+		}
+
+		const oldIndex = currentChapter.mediaIds.indexOf( active.id );
+		const newIndex = currentChapter.mediaIds.indexOf( over.id );
+
+		const reorderedMediaIds = arrayMove( currentChapter.mediaIds, oldIndex, newIndex );
+
+		const updated = chapters.map( ch =>
+			ch.id === currentChapter.id
+				? { ...ch, mediaIds: reorderedMediaIds }
 				: ch
 		);
 		updateChapters( updated );
-		
-		setDraggedMediaIndex( null );
 	};
 	
 	// Fetch attachment data for media IDs that aren't cached
@@ -224,144 +330,163 @@ export default function Edit( { clientId } ) {
 		} );
 	}, [ currentChapter?.id, currentChapter?.mediaIds ] );
 	
+	// Count total media items across all chapters
+	const totalMediaCount = chapters.reduce( ( sum, ch ) => sum + ch.mediaIds.length, 0 );
+	const chapterCount = chapters.length;
+	
 	// Render
 	return (
-		<div className="abu-gallery-maker">
-			<div className="abu-gallery-maker__sidebar">
-				<h3 className="abu-gallery-maker__sidebar-title">
-					{ __( 'Chapters', 'abu-pinterest-gallery' ) }
-				</h3>
-				<div className="abu-gallery-maker__chapters">
-					{ chapters.map( ( chapter ) => {
-						const isActive = chapter.id === selectedChapterId;
-						const isEmpty = chapter.mediaIds.length === 0;
-						
-						return (
-							<div
-								key={ chapter.id }
-								className={ `abu-gallery-maker__chapter ${ isActive ? 'is-active' : '' }` }
-								onClick={ () => setSelectedChapterId( chapter.id ) }
-							>
-								<TextControl
-									value={ chapter.name }
-									onChange={ ( value ) => updateChapterName( chapter.id, value ) }
-									onClick={ ( e ) => e.stopPropagation() }
-									className="abu-gallery-maker__chapter-name"
-								/>
-								{ isEmpty && (
-									<div className="abu-gallery-maker__chapter-warning">
-										⚠️ { __( 'Add media to this chapter', 'abu-pinterest-gallery' ) }
-									</div>
-								) }
-							</div>
-						);
-					} ) }
-				</div>
+		<>
+			{/* Block placeholder - shown in editor */}
+			<div className="abu-gallery-maker-wrapper">
+				<div className="abu-gallery-maker-placeholder">
+					<div className="abu-gallery-maker-placeholder__header">
+						<strong>{ __( 'ABU Gallery Maker', 'abu-pinterest-gallery' ) }</strong>
+					</div>
+					<div className="abu-gallery-maker-placeholder__info">
+						{ totalMediaCount > 0 
+							? `${ chapterCount } chapter(s) • ${ totalMediaCount } media item(s)`
+							: __( 'Create and organize your gallery into chapters', 'abu-pinterest-gallery' )
+						}
+					</div>
 				<Button
-					variant="secondary"
-					onClick={ addChapter }
-					className="abu-gallery-maker__add-chapter"
+					variant="primary"
+					onClick={ () => setIsModalOpen( true ) }
+					className="abu-gallery-maker__edit-button"
 				>
-					{ __( '+ Add Chapter', 'abu-pinterest-gallery' ) }
+					{ __( 'Edit Gallery', 'abu-pinterest-gallery' ) }
 				</Button>
+				</div>
 			</div>
 			
-			<div className="abu-gallery-maker__main">
-				{ currentChapter ? (
-					<>
-						<div className="abu-gallery-maker__header">
-							<h2>{ currentChapter.name }</h2>
-							<Button
-								variant="primary"
-								onClick={ addMedia }
-							>
-								{ __( 'Add Media', 'abu-pinterest-gallery' ) }
-							</Button>
-						</div>
-						
-						{ currentChapter.mediaIds.length === 0 ? (
-							<Placeholder
-								icon="images-alt2"
-								label={ __( 'No media in this chapter', 'abu-pinterest-gallery' ) }
-								instructions={ __( 'Click "Add Media" to select images or videos for this chapter.', 'abu-pinterest-gallery' ) }
-							/>
-						) : (
-							<div className="abu-gallery-maker__media-grid">
-								{ currentChapter.mediaIds.map( ( mediaId, index ) => {
-									const media = mediaData[ mediaId ];
-									
-									if ( ! media ) {
-										return (
-											<div key={ mediaId } className="abu-gallery-maker__media-item">
-												<Spinner />
-											</div>
-										);
-									}
-									
-									if ( media === null ) {
-										return (
-											<div key={ mediaId } className="abu-gallery-maker__media-item abu-gallery-maker__media-item--invalid">
-												<div className="abu-gallery-maker__media-placeholder">
-													{ __( 'Invalid media', 'abu-pinterest-gallery' ) }
-												</div>
-												<Button
-													isDestructive
-													isSmall
-													onClick={ () => removeMedia( mediaId ) }
-													className="abu-gallery-maker__remove"
-												>
-													×
-												</Button>
-											</div>
-										);
-									}
-									
-									const thumbnailUrl = media.sizes?.thumbnail?.source_url || media.url;
-									const isVideo = media.mime?.startsWith( 'video/' );
+			{/* Full-screen modal editor */}
+			{ isModalOpen && (
+				<Modal
+					title={ __( 'ABU Gallery Editor', 'abu-pinterest-gallery' ) }
+					onRequestClose={ () => setIsModalOpen( false ) }
+					isFullScreen
+					className="abu-gallery-maker-modal"
+				>
+					<div className="abu-gallery-maker">
+						<div className="abu-gallery-maker__sidebar">
+							<h3 className="abu-gallery-maker__sidebar-title">
+								{ __( 'Chapters', 'abu-pinterest-gallery' ) }
+							</h3>
+							<div className="abu-gallery-maker__chapters">
+								{ chapters.map( ( chapter ) => {
+									const isActive = chapter.id === selectedChapterId;
+									const isEmpty = chapter.mediaIds.length === 0;
 									
 									return (
 										<div
-											key={ mediaId }
-											className="abu-gallery-maker__media-item"
-											draggable
-											onDragStart={ () => handleDragStart( index ) }
-											onDragOver={ handleDragOver }
-											onDrop={ () => handleDrop( index ) }
+											key={ chapter.id }
+											className={ `abu-gallery-maker__chapter ${ isActive ? 'is-active' : '' }` }
+											onClick={ () => setSelectedChapterId( chapter.id ) }
 										>
-											<div className="abu-gallery-maker__media-preview">
-												{ isVideo ? (
-													<div className="abu-gallery-maker__media-video">
-														<video src={ media.url } />
-														<span className="abu-gallery-maker__media-video-icon">▶</span>
-													</div>
-												) : (
-													<img src={ thumbnailUrl } alt={ media.title } />
-												) }
-											</div>
-											<div className="abu-gallery-maker__media-title">
-												{ media.title || media.filename }
-											</div>
-											<Button
-												isDestructive
-												isSmall
-												onClick={ () => removeMedia( mediaId ) }
-												className="abu-gallery-maker__remove"
-											>
-												×
-											</Button>
+											<TextControl
+												value={ chapter.name }
+												onChange={ ( value ) => updateChapterName( chapter.id, value ) }
+												onClick={ ( e ) => e.stopPropagation() }
+												className="abu-gallery-maker__chapter-name"
+											/>
+											{ isEmpty && (
+												<div className="abu-gallery-maker__chapter-warning">
+													⚠️ { __( 'Add media to this chapter', 'abu-pinterest-gallery' ) }
+												</div>
+											) }
 										</div>
 									);
 								} ) }
 							</div>
-						) }
-					</>
-				) : (
-					<Placeholder
-						icon="images-alt2"
-						label={ __( 'No chapter selected', 'abu-pinterest-gallery' ) }
-					/>
-				) }
-			</div>
-		</div>
+							<Button
+								variant="secondary"
+								onClick={ addChapter }
+								className="abu-gallery-maker__add-chapter"
+							>
+								{ __( '+ Add Chapter', 'abu-pinterest-gallery' ) }
+							</Button>
+						</div>
+						
+						<div className="abu-gallery-maker__main">
+							{ currentChapter ? (
+								<>
+									<div className="abu-gallery-maker__header">
+										<h2>{ currentChapter.name }</h2>
+										<Button
+											variant="primary"
+											onClick={ addMedia }
+										>
+											{ __( 'Add Media', 'abu-pinterest-gallery' ) }
+										</Button>
+									</div>
+									
+									{ currentChapter.mediaIds.length === 0 ? (
+										<Placeholder
+											icon="images-alt2"
+											label={ __( 'No media in this chapter', 'abu-pinterest-gallery' ) }
+											instructions={ __( 'Click "Add Media" to select images or videos for this chapter.', 'abu-pinterest-gallery' ) }
+										/>
+									) : (
+										<DndContext
+											sensors={ sensors }
+											collisionDetection={ closestCenter }
+											onDragEnd={ handleDragEnd }
+										>
+											<SortableContext
+												items={ currentChapter.mediaIds }
+												strategy={ rectSortingStrategy }
+											>
+												<div className="abu-gallery-maker__media-grid">
+													{ currentChapter.mediaIds.map( ( mediaId ) => (
+														<SortableMediaItem
+															key={ mediaId }
+															mediaId={ mediaId }
+															media={ mediaData[ mediaId ] }
+															removeMedia={ removeMedia }
+															onView={ () => setLightboxMedia( mediaData[ mediaId ] ) }
+														/>
+													) ) }
+												</div>
+											</SortableContext>
+										</DndContext>
+									) }
+								</>
+							) : (
+								<Placeholder
+									icon="images-alt2"
+									label={ __( 'No chapter selected', 'abu-pinterest-gallery' ) }
+								/>
+							) }
+						</div>
+					</div>
+
+					{/* Lightbox Modal - nested inside main modal */}
+					{ lightboxMedia && (
+						<Modal
+							title={ lightboxMedia.title || lightboxMedia.filename }
+							onRequestClose={ () => setLightboxMedia( null ) }
+							className="abu-gallery-maker-lightbox"
+						>
+							<div className="abu-gallery-maker-lightbox__content">
+								{ lightboxMedia.mime?.startsWith( 'video/' ) ? (
+									<video 
+										src={ lightboxMedia.url } 
+										controls 
+										autoPlay
+										className="abu-gallery-maker-lightbox__media"
+									/>
+								) : (
+									<img 
+										src={ lightboxMedia.url } 
+										alt={ lightboxMedia.title || lightboxMedia.filename }
+										className="abu-gallery-maker-lightbox__media"
+									/>
+								) }
+							</div>
+						</Modal>
+					) }
+				</Modal>
+			) }
+		</>
 	);
 }

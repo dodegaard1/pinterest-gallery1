@@ -18,10 +18,16 @@ import metadata from '../block.json';
  * Register the ABU Gallery Maker block.
  * 
  * This block provides a chapter-based media organization UI in the block editor.
- * Phase 1: Editor-only, no front-end rendering.
+ * Automatically renders the gallery shortcode on the frontend.
  */
 registerBlockType( metadata.name, {
 	edit: Edit,
-	// No save function - this is an editor-only block that stores data in post meta
-	save: () => null,
+	// Output the shortcode on the frontend
+	save: () => {
+		return (
+			<div className="wp-block-abu-gallery-maker">
+				[abu_pinterest_gallery]
+			</div>
+		);
+	},
 } );

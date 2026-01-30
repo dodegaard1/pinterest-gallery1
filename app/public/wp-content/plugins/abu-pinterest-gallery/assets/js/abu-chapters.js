@@ -67,12 +67,12 @@
 		
 		const navHeight = nav.offsetHeight;
 		
-		// Create a map of section IDs to nav links
+		// Create a map of section slugs to nav links
 		const linkMap = {};
 		links.forEach(link => {
-			const chapterId = link.getAttribute('data-chapter-id');
-			if (chapterId) {
-				linkMap[chapterId] = link;
+			const chapterSlug = link.getAttribute('data-chapter-slug');
+			if (chapterSlug) {
+				linkMap[chapterSlug] = link;
 			}
 		});
 		
@@ -83,32 +83,32 @@
 			threshold: 0
 		};
 		
-		let currentActiveId = null;
+		let currentActiveSlug = null;
 		
 		const observer = new IntersectionObserver((entries) => {
 			// Find the first intersecting section (topmost visible section)
-			let newActiveId = null;
+			let newActiveSlug = null;
 			
 			entries.forEach(entry => {
 				if (entry.isIntersecting) {
-					const sectionId = entry.target.getAttribute('data-chapter-id');
-					if (!newActiveId || entry.target.getBoundingClientRect().top < 
-					    document.querySelector(`[data-chapter-id="${newActiveId}"]`).getBoundingClientRect().top) {
-						newActiveId = sectionId;
+					const sectionSlug = entry.target.getAttribute('data-chapter-slug');
+					if (!newActiveSlug || entry.target.getBoundingClientRect().top < 
+					    document.querySelector(`[data-chapter-slug="${newActiveSlug}"]`).getBoundingClientRect().top) {
+						newActiveSlug = sectionSlug;
 					}
 				}
 			});
 			
 			// Update active state if changed
-			if (newActiveId && newActiveId !== currentActiveId) {
-				currentActiveId = newActiveId;
+			if (newActiveSlug && newActiveSlug !== currentActiveSlug) {
+				currentActiveSlug = newActiveSlug;
 				
 				// Remove active class from all links
 				links.forEach(link => link.classList.remove('is-active'));
 				
 				// Add active class to current link
-				if (linkMap[newActiveId]) {
-					linkMap[newActiveId].classList.add('is-active');
+				if (linkMap[newActiveSlug]) {
+					linkMap[newActiveSlug].classList.add('is-active');
 				}
 			}
 		}, observerOptions);
@@ -118,10 +118,10 @@
 		
 		// Set initial active state
 		if (sections.length > 0) {
-			const firstChapterId = sections[0].getAttribute('data-chapter-id');
-			if (linkMap[firstChapterId]) {
-				linkMap[firstChapterId].classList.add('is-active');
-				currentActiveId = firstChapterId;
+			const firstChapterSlug = sections[0].getAttribute('data-chapter-slug');
+			if (linkMap[firstChapterSlug]) {
+				linkMap[firstChapterSlug].classList.add('is-active');
+				currentActiveSlug = firstChapterSlug;
 			}
 		}
 	}
