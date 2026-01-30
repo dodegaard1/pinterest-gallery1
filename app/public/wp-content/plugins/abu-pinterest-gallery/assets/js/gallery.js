@@ -413,6 +413,46 @@
     return 1;
   };
 
+  const hashCode = (str) => {
+    if (!str) {
+      return 0;
+    }
+    let hash = 0;
+    for (let i = 0; i < str.length; i += 1) {
+      const char = str.charCodeAt(i);
+      hash = (hash << 5) - hash + char;
+      hash |= 0;
+    }
+    return Math.abs(hash);
+  };
+
+  const seededRandom = (seed) => {
+    const x = Math.sin(seed) * 10000;
+    return x - Math.floor(x);
+  };
+
+  const calculateMasonryAspectRatio = (item) => {
+    const original = item.originalAspectRatio || getAspectRatio(item);
+    const MIN_ASPECT = 9 / 16;
+    const MAX_ASPECT = 16 / 9;
+    const MAX_VARIATION = 0.20;
+    const seed = hashCode(item.id);
+    const random = seededRandom(seed);
+    let minRatio;
+    let maxRatio;
+    if (original <= MIN_ASPECT) {
+      minRatio = original;
+      maxRatio = Math.min(original * (1 + MAX_VARIATION), MAX_ASPECT);
+    } else if (original >= MAX_ASPECT) {
+      minRatio = Math.max(original * (1 - MAX_VARIATION), MIN_ASPECT);
+      maxRatio = original;
+    } else {
+      minRatio = Math.max(original * (1 - MAX_VARIATION), MIN_ASPECT);
+      maxRatio = Math.min(original * (1 + MAX_VARIATION), MAX_ASPECT);
+    }
+    return minRatio + (maxRatio - minRatio) * random;
+  };
+
   const getFitRect = (ratio, viewportWidth, viewportHeight, padding = 24) => {
     const maxWidth = Math.max(0, viewportWidth - padding * 2);
     const maxHeight = Math.max(0, viewportHeight - padding * 2);
@@ -439,15 +479,16 @@
     const targetColumnWidth = isMobileViewport
       ? Math.max(160, Math.min(200, Math.floor(containerWidth / 2)))
       : config.columnWidth;
-    const gutter = config.gutter;
+    const gutterHorizontal = isMobileViewport ? 6 : config.gutter;
+    const gutterVertical = isMobileViewport ? 16 : config.gutter;
     const cols = isMobileViewport
       ? 2
-      : Math.max(1, Math.floor((containerWidth + gutter) / (targetColumnWidth + gutter)));
-    const colWidth = Math.floor((containerWidth - gutter * (cols - 1)) / cols);
+      : Math.max(1, Math.floor((containerWidth + gutterHorizontal) / (targetColumnWidth + gutterHorizontal)));
+    const colWidth = Math.floor((containerWidth - gutterHorizontal * (cols - 1)) / cols);
     const colHeights = new Array(cols).fill(0);
 
     items.forEach((item) => {
-      const ratio = getAspectRatio(item);
+      const ratio = item.masonryAspectRatio || getAspectRatio(item);
       const tileWidth = colWidth;
       const height = Math.round(tileWidth * ratio);
       item.element.style.width = `${tileWidth}px`;
@@ -459,10 +500,10 @@
           colIndex = i;
         }
       }
-      const x = (colWidth + gutter) * colIndex;
+      const x = (colWidth + gutterHorizontal) * colIndex;
       const y = colHeights[colIndex];
       item.element.style.transform = `translate(${x}px, ${y}px)`;
-      colHeights[colIndex] += height + gutter;
+      colHeights[colIndex] += height + gutterVertical;
     });
 
     const maxHeight = Math.max(...colHeights, 0);
@@ -505,49 +546,378 @@
     const backdrop = document.createElement('div');
     backdrop.className = 'abu-pg-spotlight-backdrop';
     overlay.appendChild(backdrop);
-    if (state.isIOSWebKit) {
-      overlay.addEventListener(
-        'touchmove',
-        (event) => {
-          event.preventDefault();
-        },
-        { passive: false }
-      );
-    }
+    
+    const carouselContainer = document.createElement('div');
+    carouselContainer.className = 'abu-pg-spotlight-carousel';
+    overlay.appendChild(carouselContainer);
+    
     document.body.appendChild(overlay);
     state.spotlight = {
       overlay,
       backdrop,
+      carouselContainer,
       clone: null,
       originRect: null,
+      currentIndex: 0,
+      loadedIndices: new Set(),
+      tiles: new Map(),
+      isTransitioning: false,
+      touchStartX: 0,
+      touchStartY: 0,
+      touchCurrentX: 0,
+      touchCurrentY: 0,
+      touchStartTime: 0,
+      isDragging: false,
+      dragDirection: null,
     };
+    
+    bindSpotlightGestures(state);
   };
 
-  const closeSpotlight = (state) => {
-    if (!state.spotlight || !state.spotlight.clone) {
+  const bindSpotlightGestures = (state) => {
+    const { overlay, carouselContainer } = state.spotlight;
+    let isPrimaryTouch = false;
+    
+    const handleTouchStart = (event) => {
+      if (state.spotlight.isTransitioning) {
+        return;
+      }
+      if (event.target.closest('button')) {
+        return;
+      }
+      
+      const touch = event.touches[0];
+      state.spotlight.touchStartX = touch.clientX;
+      state.spotlight.touchStartY = touch.clientY;
+      state.spotlight.touchCurrentX = touch.clientX;
+      state.spotlight.touchCurrentY = touch.clientY;
+      state.spotlight.touchStartTime = event.timeStamp;
+      state.spotlight.isDragging = false;
+      state.spotlight.dragDirection = null;
+      isPrimaryTouch = true;
+    };
+    
+    const handleTouchMove = (event) => {
+      if (!isPrimaryTouch || state.spotlight.isTransitioning) {
+        return;
+      }
+      
+      const touch = event.touches[0];
+      state.spotlight.touchCurrentX = touch.clientX;
+      state.spotlight.touchCurrentY = touch.clientY;
+      
+      const deltaX = touch.clientX - state.spotlight.touchStartX;
+      const deltaY = touch.clientY - state.spotlight.touchStartY;
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+      
+      if (!state.spotlight.isDragging && (absDeltaX > 10 || absDeltaY > 10)) {
+        state.spotlight.isDragging = true;
+        state.spotlight.dragDirection = absDeltaX > absDeltaY ? 'horizontal' : 'vertical';
+      }
+      
+      if (state.spotlight.isDragging) {
+        event.preventDefault();
+        
+        const currentTile = carouselContainer.querySelector('.abu-pg-spotlight-slide.is-active');
+        if (!currentTile) return;
+        
+        if (state.spotlight.dragDirection === 'horizontal') {
+          const clampedDelta = Math.max(-window.innerWidth, Math.min(window.innerWidth, deltaX));
+          currentTile.style.transform = `translateX(${clampedDelta}px)`;
+          currentTile.style.transition = 'none';
+          
+          const adjacentTiles = carouselContainer.querySelectorAll('.abu-pg-spotlight-slide:not(.is-active)');
+          adjacentTiles.forEach(tile => {
+            const offset = parseFloat(tile.dataset.offset || 0);
+            tile.style.transform = `translateX(${offset * window.innerWidth + clampedDelta}px)`;
+            tile.style.transition = 'none';
+          });
+        } else if (state.spotlight.dragDirection === 'vertical') {
+          const progress = Math.min(1, absDeltaY / (window.innerHeight * 0.4));
+          const scale = 1 - (progress * 0.15);
+          currentTile.style.transform = `translateY(${deltaY}px) scale(${scale})`;
+          currentTile.style.transition = 'none';
+          overlay.style.opacity = 1 - (progress * 0.5);
+        }
+      }
+    };
+    
+    const handleTouchEnd = (event) => {
+      if (!isPrimaryTouch) {
+        return;
+      }
+      isPrimaryTouch = false;
+      
+      if (!state.spotlight.isDragging) {
+        return;
+      }
+      
+      const deltaX = state.spotlight.touchCurrentX - state.spotlight.touchStartX;
+      const deltaY = state.spotlight.touchCurrentY - state.spotlight.touchStartY;
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+      
+      const currentTile = carouselContainer.querySelector('.abu-pg-spotlight-slide.is-active');
+      if (!currentTile) return;
+      
+      if (state.spotlight.dragDirection === 'horizontal') {
+        const threshold = window.innerWidth * 0.25;
+        const velocity = absDeltaX / (event.timeStamp - state.spotlight.touchStartTime || 1);
+        
+        if (absDeltaX > threshold || velocity > 0.5) {
+          if (deltaX > 0 && state.spotlight.currentIndex > 0) {
+            navigateSpotlight(state, 'prev');
+          } else if (deltaX < 0 && state.spotlight.currentIndex < state.allItems.length - 1) {
+            navigateSpotlight(state, 'next');
+          } else {
+            resetSpotlightPosition(state);
+          }
+        } else {
+          resetSpotlightPosition(state);
+        }
+      } else if (state.spotlight.dragDirection === 'vertical') {
+        const threshold = window.innerHeight * 0.2;
+        if (absDeltaY > threshold) {
+          closeSpotlight(state);
+        } else {
+          resetSpotlightPosition(state);
+          overlay.style.opacity = '';
+        }
+      }
+      
+      state.spotlight.isDragging = false;
+      state.spotlight.dragDirection = null;
+    };
+    
+    overlay.addEventListener('touchstart', handleTouchStart, { passive: false });
+    overlay.addEventListener('touchmove', handleTouchMove, { passive: false });
+    overlay.addEventListener('touchend', handleTouchEnd, { passive: true });
+    overlay.addEventListener('touchcancel', handleTouchEnd, { passive: true });
+  };
+  
+  const resetSpotlightPosition = (state) => {
+    const { carouselContainer } = state.spotlight;
+    const slides = carouselContainer.querySelectorAll('.abu-pg-spotlight-slide');
+    
+    slides.forEach(slide => {
+      slide.style.transition = '';
+      if (slide.classList.contains('is-active')) {
+        slide.style.transform = 'translateX(0)';
+      } else {
+        const offset = parseFloat(slide.dataset.offset || 0);
+        slide.style.transform = `translateX(${offset * window.innerWidth}px)`;
+      }
+    });
+  };
+  
+  const navigateSpotlight = (state, direction) => {
+    if (state.spotlight.isTransitioning) {
       return;
     }
-    const { overlay, clone, targetRect, scale, content } = state.spotlight;
-    if (content) {
-      content.remove();
-      state.spotlight.content = null;
+    
+    const newIndex = direction === 'next' 
+      ? state.spotlight.currentIndex + 1 
+      : state.spotlight.currentIndex - 1;
+    
+    if (newIndex < 0 || newIndex >= state.allItems.length) {
+      resetSpotlightPosition(state);
+      return;
     }
-    clone.style.opacity = '1';
-    clone.style.transform = `translate(${targetRect.left - state.spotlight.originRect.left}px, ${targetRect.top - state.spotlight.originRect.top}px) scale(${scale})`;
-    overlay.classList.remove('is-visible');
-    requestAnimationFrame(() => {
-      clone.style.transform = 'translate(0px, 0px) scale(1)';
+    
+    state.spotlight.isTransitioning = true;
+    const { carouselContainer } = state.spotlight;
+    
+    let newSlide = carouselContainer.querySelector(`.abu-pg-spotlight-slide[data-index="${newIndex}"]`);
+    
+    if (!newSlide) {
+      const newItem = state.allItems[newIndex];
+      const slide = createSpotlightSlide(state, newItem, newIndex);
+      slide.dataset.offset = direction === 'next' ? 1 : -1;
+      slide.style.transform = `translateX(${(direction === 'next' ? 1 : -1) * window.innerWidth}px)`;
+      carouselContainer.appendChild(slide);
+      preloadSpotlightTile(state, newItem, slide, false);
+      newSlide = slide;
+    }
+    
+    const offset = direction === 'next' ? -1 : 1;
+    const slides = carouselContainer.querySelectorAll('.abu-pg-spotlight-slide');
+    
+    slides.forEach(slide => {
+      slide.style.transition = 'transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1)';
+      const currentOffset = parseFloat(slide.dataset.offset || 0);
+      const newOffset = currentOffset + offset;
+      slide.dataset.offset = newOffset;
+      slide.style.transform = `translateX(${newOffset * window.innerWidth}px)`;
+      
+      if (newOffset === 0) {
+        slide.classList.add('is-active');
+      } else {
+        slide.classList.remove('is-active');
+        const video = slide.querySelector('video');
+        if (video) {
+          video.pause();
+        }
+      }
     });
+    
+    state.spotlight.currentIndex = newIndex;
+    
+    setTimeout(() => {
+      state.spotlight.isTransitioning = false;
+      
+      const activeSlide = carouselContainer.querySelector('.abu-pg-spotlight-slide.is-active');
+      if (activeSlide) {
+        const video = activeSlide.querySelector('video');
+        if (video && video.readyState >= 2) {
+          video.play().catch(() => {});
+        }
+      }
+      
+      preloadAdjacentTiles(state);
+      cleanupDistantTiles(state);
+      syncMasonryPosition(state);
+    }, 350);
+  };
+  
+  const preloadAdjacentTiles = (state) => {
+    const { currentIndex } = state.spotlight;
+    const { carouselContainer } = state.spotlight;
+    
+    [-1, 1].forEach(offset => {
+      const index = currentIndex + offset;
+      if (index >= 0 && index < state.allItems.length) {
+        if (!state.spotlight.loadedIndices.has(index)) {
+          const existingSlide = carouselContainer.querySelector(`.abu-pg-spotlight-slide[data-index="${index}"]`);
+          if (!existingSlide) {
+            const item = state.allItems[index];
+            const slide = createSpotlightSlide(state, item, index);
+            slide.dataset.offset = offset;
+            slide.style.transform = `translateX(${offset * window.innerWidth}px)`;
+            carouselContainer.appendChild(slide);
+            preloadSpotlightTile(state, item, slide, false);
+          }
+        }
+      }
+    });
+  };
+  
+  const cleanupDistantTiles = (state) => {
+    const { currentIndex, carouselContainer } = state.spotlight;
+    const threshold = 3;
+    
+    const slides = carouselContainer.querySelectorAll('.abu-pg-spotlight-slide');
+    slides.forEach(slide => {
+      const index = parseInt(slide.dataset.index, 10);
+      const distance = Math.abs(index - currentIndex);
+      
+      if (distance > threshold) {
+        const video = slide.querySelector('video');
+        if (video) {
+          video.pause();
+          video.src = '';
+          video.load();
+        }
+        slide.remove();
+        state.spotlight.loadedIndices.delete(index);
+      }
+    });
+  };
+  
+  const syncMasonryPosition = (state) => {
+    const { currentIndex } = state.spotlight;
+    const item = state.allItems[currentIndex];
+    
+    if (item && item.element) {
+      const rect = item.element.getBoundingClientRect();
+      const scrollTop = window.scrollY || window.pageYOffset;
+      const elementTop = rect.top + scrollTop;
+      const offset = window.innerHeight * 0.2;
+      
+      state.scrollY = Math.max(0, elementTop - offset);
+    }
+  };
+  
+  const createSpotlightSlide = (state, item, index) => {
+    const slide = document.createElement('div');
+    slide.className = 'abu-pg-spotlight-slide';
+    slide.dataset.index = index;
+    
+    const ratio = item.originalAspectRatio || getAspectRatio(item);
+    const target = getFitRect(ratio, window.innerWidth, window.innerHeight);
+    
+    slide.style.position = 'fixed';
+    slide.style.top = `${target.top}px`;
+    slide.style.left = `${target.left}px`;
+    slide.style.width = `${target.width}px`;
+    slide.style.height = `${target.height}px`;
+    
+    return slide;
+  };
+  
+  const preloadSpotlightTile = (state, item, slide, shouldAutoplay = false) => {
+    const content = createTileElement(item, state.templates, state, 'spotlight');
+    content.style.width = '100%';
+    content.style.height = '100%';
+    content.style.position = 'absolute';
+    content.style.top = '0';
+    content.style.left = '0';
+    
+    slide.appendChild(content);
+    bindSpotlightInteractions(content, item, state, shouldAutoplay);
+    
+    const index = parseInt(slide.dataset.index, 10);
+    state.spotlight.loadedIndices.add(index);
+    
+    return content;
+  };
+  
+  const closeSpotlight = (state, skipAnimation = false) => {
+    if (!state.spotlight) {
+      return;
+    }
+    
+    const { overlay, carouselContainer } = state.spotlight;
+    const currentSlide = carouselContainer ? carouselContainer.querySelector('.abu-pg-spotlight-slide.is-active') : null;
+    
+    if (skipAnimation || !currentSlide) {
+      if (overlay) {
+        overlay.remove();
+      }
+      state.spotlight = null;
+      unlockScroll(state);
+      return;
+    }
+    
+    // Pre-scroll masonry grid to target position while spotlight is still visible
+    // This prevents the visible "jump" when the spotlight closes
+    if (state.isIOSWebKit) {
+      // iOS WebKit: Can scroll directly since position:fixed is not used
+      window.scrollTo(0, state.scrollY || 0);
+    } else {
+      // Non-iOS: Update the fixed position top value to match new scroll position
+      // This makes the page appear at the new position before unlock
+      document.body.style.top = `-${state.scrollY || 0}px`;
+    }
+    
+    overlay.classList.remove('is-visible');
+    
+    if (currentSlide) {
+      currentSlide.style.transition = 'transform 320ms cubic-bezier(0.2, 0.8, 0.2, 1), opacity 220ms ease';
+      currentSlide.style.opacity = '0';
+      currentSlide.style.transform = 'translateY(100px) scale(0.95)';
+    }
+    
     const cleanup = () => {
-      clone.removeEventListener('transitionend', cleanup);
       overlay.remove();
       state.spotlight = null;
       unlockScroll(state);
     };
-    clone.addEventListener('transitionend', cleanup);
+    
+    setTimeout(cleanup, 350);
   };
 
-  const bindSpotlightInteractions = (tile, item, state) => {
+  const bindSpotlightInteractions = (tile, item, state, shouldAutoplay = true) => {
     const downloadBtn = tile.querySelector('.abu-pg-download');
     if (downloadBtn) {
       downloadBtn.addEventListener('click', (event) => {
@@ -624,22 +994,24 @@
       { once: true }
     );
 
-    requestAnimationFrame(() => {
-      video.play().catch(() => {});
-    });
+    if (shouldAutoplay) {
+      requestAnimationFrame(() => {
+        video.play().catch(() => {});
+      });
+    }
 
     const muteBtn = tile.querySelector('.abu-pg-mute');
     if (muteBtn) {
-      muteBtn.setAttribute('aria-pressed', video.volume === 0 ? 'true' : 'false');
-      muteBtn.setAttribute('aria-label', video.volume === 0 ? 'Unmute' : 'Mute');
+      muteBtn.setAttribute('aria-pressed', video.muted ? 'true' : 'false');
+      muteBtn.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute');
       muteBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         state.userActivated = true;
-        const isMuted = video.volume === 0;
+        const isMuted = video.muted;
         const nextVolume = isMuted ? 1 : 0;
-        video.muted = nextVolume === 0;
-        setVolumeWithRamp(video, nextVolume);
+        video.muted = !isMuted;
+        video.volume = nextVolume;
         video.dataset.abuVolume = String(nextVolume);
         muteBtn.setAttribute('aria-pressed', isMuted ? 'false' : 'true');
         muteBtn.setAttribute('aria-label', isMuted ? 'Mute' : 'Unmute');
@@ -673,10 +1045,18 @@
     // #region agent log
     logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'E',location:'gallery.js:454',message:'openSpotlight called (https)',data:{type:item.type||'',id:item.id||'',url:item.url||''},timestamp:Date.now()});
     // #endregion agent log
-    const { overlay } = state.spotlight;
+    const { overlay, carouselContainer } = state.spotlight;
     if (state.spotlight.clone) {
       return;
     }
+    
+    state.allItems = sortItemsByMasonryOrder(state.allItems);
+    
+    const itemIndex = state.allItems.findIndex(i => i.id === item.id);
+    if (itemIndex === -1) {
+      return;
+    }
+    state.spotlight.currentIndex = itemIndex;
 
     const rect = tile.getBoundingClientRect();
     const tileImg = item.type === 'image' ? tile.querySelector('img') : null;
@@ -694,7 +1074,7 @@
       }
       // #endregion agent log
     }
-    const ratio = getAspectRatio(item);
+    const ratio = item.originalAspectRatio || getAspectRatio(item);
     const target = getFitRect(ratio, window.innerWidth, window.innerHeight);
     const tileStyles = window.getComputedStyle(tile);
     const tileRadius = tileStyles && tileStyles.borderRadius ? tileStyles.borderRadius : '14px';
@@ -813,21 +1193,25 @@
 
     const onTransitionEnd = () => {
       clone.removeEventListener('transitionend', onTransitionEnd);
+      
+      const slide = createSpotlightSlide(state, item, itemIndex);
+      slide.classList.add('is-active');
+      slide.dataset.offset = 0;
+      slide.style.transform = 'translateX(0)';
+      
       const content = createTileElement(item, state.templates, state, 'spotlight');
-      content.classList.add('abu-pg-spotlight-content');
-      content.style.position = 'fixed';
-      content.style.top = `${target.top}px`;
-      content.style.left = `${target.left}px`;
-      content.style.width = `${target.width}px`;
-      content.style.height = `${target.height}px`;
-      content.style.margin = '0';
-      content.style.setProperty('--abu-pg-radius-start', tileRadius);
-      content.style.setProperty('--abu-pg-radius-end', '0px');
-      overlay.appendChild(content);
-      state.spotlight.content = content;
+      content.style.width = '100%';
+      content.style.height = '100%';
+      content.style.position = 'absolute';
+      content.style.top = '0';
+      content.style.left = '0';
+      
+      slide.appendChild(content);
+      carouselContainer.appendChild(slide);
+      state.spotlight.loadedIndices.add(itemIndex);
       if (item.type === 'image') {
-        const preview = content.querySelector('.abu-pg-spotlight-preview');
-        const fullImage = content.querySelector('img:not(.abu-pg-spotlight-preview)');
+        const preview = content.querySelector('.abu-pg-spotlight-poster');
+        const fullImage = content.querySelector('img:not(.abu-pg-spotlight-poster)');
         // #region agent log
         const previewStyles = preview ? window.getComputedStyle(preview) : null;
         logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'I',location:'gallery.js:589',message:'spotlight content styles',data:{hasPreview:preview?'yes':'no',previewOpacity:previewStyles?previewStyles.opacity:'',previewVisibility:previewStyles?previewStyles.visibility:'',previewW:preview?preview.clientWidth||0:0,previewH:preview?preview.clientHeight||0:0,fullW:fullImage?fullImage.clientWidth||0:0,fullH:fullImage?fullImage.clientHeight||0:0},timestamp:Date.now()});
@@ -871,6 +1255,12 @@
           }
           // #endregion agent log
           clone.style.opacity = '0';
+          setTimeout(() => {
+            if (clone && clone.parentElement) {
+              clone.remove();
+              state.spotlight.clone = null;
+            }
+          }, 200);
         };
         const hideCloneWhenReady = (img, label) => {
           if (!img) {
@@ -899,8 +1289,16 @@
         hideCloneWhenReady(cloneTarget, fullImage ? 'full' : 'preview');
       } else {
         clone.style.opacity = '0';
+        setTimeout(() => {
+          if (clone && clone.parentElement) {
+            clone.remove();
+            state.spotlight.clone = null;
+          }
+        }, 200);
       }
-      bindSpotlightInteractions(content, item, state);
+      bindSpotlightInteractions(content, item, state, true);
+      
+      preloadAdjacentTiles(state);
     };
     clone.addEventListener('transitionend', onTransitionEnd);
   };
@@ -923,21 +1321,31 @@
   };
 
   const buildItemsFromDOM = (gallery) => {
-    return Array.from(gallery.querySelectorAll('.abu-pg-tile')).map((tile) => {
+    const tiles = Array.from(gallery.querySelectorAll('.abu-pg-tile'));
+    
+    return tiles.map((tile, originalIndex) => {
       const video = tile.querySelector('video.abu-pg-video');
       const img = tile.querySelector('img');
       const previewSrc = img
         ? img.currentSrc || img.getAttribute('src') || img.dataset.src || ''
         : '';
-      return {
+      const width = Number(tile.dataset.width || 0);
+      const height = Number(tile.dataset.height || 0);
+      const type = tile.dataset.type || '';
+      const originalAspectRatio = (width > 0 && height > 0)
+        ? height / width
+        : (type === 'video' ? 9 / 16 : 1);
+      const item = {
         id: tile.dataset.id || '',
-        type: tile.dataset.type || '',
+        type,
         url: tile.dataset.url || '',
         createdAt: tile.dataset.created || '',
         filename: tile.dataset.filename || '',
         title: tile.dataset.title || '',
-        width: Number(tile.dataset.width || 0),
-        height: Number(tile.dataset.height || 0),
+        width,
+        height,
+        originalAspectRatio,
+        masonryAspectRatio: null,
         meta360: tile.dataset.abuMeta360 || '',
         meta720: tile.dataset.abuMeta720 || '',
         metaPoster: tile.dataset.abuMetaPoster || '',
@@ -951,8 +1359,34 @@
         src360: getVideoDataAttr(video, 'data-src-360', 'src360'),
         src720: getVideoDataAttr(video, 'data-src-720', 'src720'),
         poster: getVideoDataAttr(video, 'data-poster', 'poster'),
+        element: tile,
+        originalIndex,
       };
+      item.masonryAspectRatio = calculateMasonryAspectRatio(item);
+      return item;
     });
+  };
+  
+  const sortItemsByMasonryOrder = (items) => {
+    const itemsWithPositions = items.map(item => {
+      if (!item.element) {
+        return { ...item, x: 0, y: 0 };
+      }
+      const transform = item.element.style.transform || '';
+      const match = transform.match(/translate\((-?\d+(?:\.\d+)?)px,\s*(-?\d+(?:\.\d+)?)px\)/);
+      const x = match ? parseFloat(match[1]) : 0;
+      const y = match ? parseFloat(match[2]) : 0;
+      return { ...item, x, y };
+    });
+    
+    itemsWithPositions.sort((a, b) => {
+      if (Math.abs(a.y - b.y) < 10) {
+        return a.x - b.x;
+      }
+      return a.y - b.y;
+    });
+    
+    return itemsWithPositions;
   };
 
   const createTileElement = (item, templates, state, context = 'grid') => {
@@ -1204,6 +1638,499 @@
     return tile;
   };
 
+  const createDesktopSpotlight = (state) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'abu-pg-desktop-spotlight';
+    
+    const container = document.createElement('div');
+    container.className = 'abu-pg-desktop-spotlight-container';
+    
+    const leftColumn = document.createElement('div');
+    leftColumn.className = 'abu-pg-desktop-spotlight-left';
+    
+    const rightColumn = document.createElement('div');
+    rightColumn.className = 'abu-pg-desktop-spotlight-right';
+    
+    container.appendChild(leftColumn);
+    container.appendChild(rightColumn);
+    overlay.appendChild(container);
+    document.body.appendChild(overlay);
+    
+    state.desktopSpotlight = {
+      overlay,
+      container,
+      leftColumn,
+      rightColumn,
+      currentItem: null,
+      rightGrid: null,
+      isTransitioning: false,
+    };
+  };
+  
+  const getAdjacentItems = (state, currentItem, count = 20) => {
+    const sortedItems = sortItemsByMasonryOrder(state.allItems);
+    const currentIndex = sortedItems.findIndex(item => item.id === currentItem.id);
+    
+    if (currentIndex === -1) {
+      return sortedItems.slice(0, count);
+    }
+    
+    const halfCount = Math.floor(count / 2);
+    let start = Math.max(0, currentIndex - halfCount);
+    let end = Math.min(sortedItems.length, currentIndex + halfCount + 1);
+    
+    if (end - start < count) {
+      if (start === 0) {
+        end = Math.min(sortedItems.length, count);
+      } else {
+        start = Math.max(0, end - count);
+      }
+    }
+    
+    return sortedItems.slice(start, end).filter(item => item.id !== currentItem.id);
+  };
+  
+  const renderDesktopSpotlightMedia = (state, item) => {
+    const { leftColumn } = state.desktopSpotlight;
+    leftColumn.innerHTML = '';
+    
+    if (!item || !item.type) {
+      console.error('Invalid item passed to renderDesktopSpotlightMedia:', item);
+      return;
+    }
+    
+    const backBtn = document.createElement('button');
+    backBtn.type = 'button';
+    backBtn.className = 'abu-pg-desktop-spotlight-back-btn yp-icon-button';
+    if (state.iconTemplates.back) {
+      backBtn.innerHTML = state.iconTemplates.back;
+    }
+    leftColumn.appendChild(backBtn);
+    
+    backBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeDesktopSpotlight(state);
+    });
+    
+    const mediaContainer = document.createElement('div');
+    mediaContainer.className = 'abu-pg-desktop-spotlight-media-container';
+    
+    const buttonsTop = document.createElement('div');
+    buttonsTop.className = 'abu-pg-desktop-spotlight-buttons-top';
+    
+    const buttonsLeft = document.createElement('div');
+    buttonsLeft.className = 'abu-pg-desktop-spotlight-buttons-left';
+    
+    const likeBtn = document.createElement('button');
+    likeBtn.type = 'button';
+    likeBtn.className = 'abu-pg-social-btn abu-pg-like-btn';
+    likeBtn.dataset.mediaId = item.id;
+    likeBtn.dataset.mediaFilename = item.filename || '';
+    likeBtn.dataset.mediaUrl = item.url || '';
+    likeBtn.dataset.state = 'unliked';
+    likeBtn.setAttribute('aria-label', 'Like');
+    if (state.iconTemplates.heart) {
+      likeBtn.innerHTML = state.iconTemplates.heart;
+    }
+    
+    const commentBtn = document.createElement('button');
+    commentBtn.type = 'button';
+    commentBtn.className = 'abu-pg-social-btn abu-pg-comment-btn';
+    commentBtn.dataset.mediaId = item.id;
+    commentBtn.dataset.mediaFilename = item.filename || '';
+    commentBtn.dataset.mediaUrl = item.url || '';
+    commentBtn.setAttribute('aria-label', 'Comment');
+    if (state.iconTemplates.chatBubble) {
+      commentBtn.innerHTML = state.iconTemplates.chatBubble;
+    }
+    
+    const shareBtn = document.createElement('button');
+    shareBtn.type = 'button';
+    shareBtn.className = 'abu-pg-social-btn abu-pg-share-btn';
+    shareBtn.dataset.mediaId = item.id;
+    shareBtn.dataset.mediaFilename = item.filename || '';
+    shareBtn.dataset.mediaUrl = item.url || '';
+    shareBtn.setAttribute('aria-label', 'Share');
+    if (state.iconTemplates.share2) {
+      shareBtn.innerHTML = state.iconTemplates.share2;
+    }
+    
+    buttonsLeft.appendChild(likeBtn);
+    buttonsLeft.appendChild(commentBtn);
+    buttonsLeft.appendChild(shareBtn);
+    
+    const buttonsRight = document.createElement('div');
+    buttonsRight.className = 'abu-pg-desktop-spotlight-buttons-right';
+    
+    let muteBtn = null;
+    if (item.type === 'video') {
+      muteBtn = document.createElement('button');
+      muteBtn.type = 'button';
+      muteBtn.className = 'abu-pg-desktop-spotlight-mute';
+      muteBtn.setAttribute('aria-pressed', 'false');
+      muteBtn.setAttribute('aria-label', 'Mute');
+      if (state.iconTemplates.speakerLoud && state.iconTemplates.speakerOff) {
+        muteBtn.innerHTML = `
+          <span class="abu-pg-desktop-spotlight-mute-icon-on">${state.iconTemplates.speakerLoud}</span>
+          <span class="abu-pg-desktop-spotlight-mute-icon-off">${state.iconTemplates.speakerOff}</span>
+        `;
+      }
+      buttonsRight.appendChild(muteBtn);
+    }
+    
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'abu-pg-desktop-spotlight-save-btn';
+    saveBtn.textContent = 'Save';
+    buttonsRight.appendChild(saveBtn);
+    
+    saveBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (item.url) {
+        downloadFile(item.url);
+      }
+    });
+    
+    buttonsTop.appendChild(buttonsLeft);
+    buttonsTop.appendChild(buttonsRight);
+    mediaContainer.appendChild(buttonsTop);
+    
+    const mediaWrapper = document.createElement('div');
+    mediaWrapper.className = 'abu-pg-desktop-spotlight-media-wrapper';
+    
+    if (item.type === 'image') {
+      const img = document.createElement('img');
+      img.src = item.url;
+      img.alt = item.title || '';
+      img.style.cursor = 'default';
+      mediaWrapper.appendChild(img);
+    } else if (item.type === 'video') {
+      console.log('Rendering desktop spotlight video:', {
+        id: item.id,
+        url: item.url,
+        src720: item.src720,
+        src360: item.src360,
+        srcOriginal: item.srcOriginal,
+        poster: item.poster
+      });
+      
+      const video = document.createElement('video');
+      video.className = 'abu-pg-video';
+      video.setAttribute('playsinline', '');
+      video.setAttribute('loop', '');
+      video.setAttribute('preload', 'auto');
+      video.style.cursor = 'pointer';
+      
+      const chosenSrc = item.src720 || item.src360 || item.srcOriginal || item.url;
+      if (!chosenSrc) {
+        console.error('No video source available for item:', item);
+        return;
+      }
+      
+      const source = document.createElement('source');
+      source.setAttribute('src', chosenSrc);
+      source.setAttribute('type', 'video/mp4');
+      video.appendChild(source);
+      
+      video.volume = 1;
+      video.muted = false;
+      
+      const posterUrl = item.poster || '';
+      if (posterUrl) {
+        const posterImg = document.createElement('img');
+        posterImg.className = 'abu-pg-desktop-spotlight-poster';
+        posterImg.src = posterUrl;
+        posterImg.style.position = 'absolute';
+        posterImg.style.inset = '0';
+        posterImg.style.width = '100%';
+        posterImg.style.height = '100%';
+        posterImg.style.objectFit = 'contain';
+        posterImg.style.zIndex = '2';
+        posterImg.style.pointerEvents = 'none';
+        mediaWrapper.appendChild(posterImg);
+      }
+      
+      mediaWrapper.appendChild(video);
+      
+      if (muteBtn) {
+        muteBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          state.userActivated = true;
+          const isMuted = video.muted;
+          const nextVolume = isMuted ? 1 : 0;
+          video.muted = !isMuted;
+          video.volume = nextVolume;
+          video.dataset.abuVolume = String(nextVolume);
+          muteBtn.setAttribute('aria-pressed', isMuted ? 'false' : 'true');
+          muteBtn.setAttribute('aria-label', isMuted ? 'Mute' : 'Unmute');
+        });
+      }
+      
+      video.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (video.paused) {
+          video.play().catch(() => {});
+        } else {
+          video.pause();
+        }
+      });
+      
+      const hidePosterAndPlay = () => {
+        const posterImg = mediaWrapper.querySelector('.abu-pg-desktop-spotlight-poster');
+        if (posterImg) {
+          posterImg.style.opacity = '0';
+          posterImg.style.transition = 'opacity 180ms ease';
+          setTimeout(() => posterImg.remove(), 200);
+        }
+      };
+      
+      video.addEventListener('playing', hidePosterAndPlay, { once: true });
+      
+      const attemptPlay = () => {
+        if (video.readyState >= 2) {
+          video.play().catch(() => {});
+        } else {
+          video.addEventListener('loadeddata', () => {
+            video.play().catch(() => {});
+          }, { once: true });
+        }
+      };
+      
+      video.load();
+      setTimeout(attemptPlay, 50);
+    }
+    
+    mediaContainer.appendChild(mediaWrapper);
+    leftColumn.appendChild(mediaContainer);
+  };
+  
+  const renderDesktopSpotlightRightColumn = (state, adjacentItems) => {
+    const { rightColumn } = state.desktopSpotlight;
+    
+    let grid = rightColumn.querySelector('.abu-pg-desktop-spotlight-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'abu-pg-desktop-spotlight-grid';
+      rightColumn.appendChild(grid);
+    }
+    
+    grid.innerHTML = '';
+    state.desktopSpotlight.rightGrid = grid;
+    
+    const rightItems = adjacentItems.map((item, index) => {
+      const tile = createTileElement(item, state.templates, state, 'grid');
+      tile.style.position = 'absolute';
+      tile.style.top = '0';
+      tile.style.left = '0';
+      
+      grid.appendChild(tile);
+      
+      tile.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.target && event.target.closest('button')) {
+          return;
+        }
+        switchDesktopSpotlightMedia(state, item);
+      });
+      
+      // Attach download button event listener
+      const downloadBtn = tile.querySelector('.abu-pg-download');
+      if (downloadBtn) {
+        downloadBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (item.url) {
+            handleDownload(item.url);
+          }
+          // Blur the button to remove focus state and allow hover state to clear
+          downloadBtn.blur();
+          tile.blur();
+        });
+      }
+      
+      const img = tile.querySelector('img');
+      if (img && img.dataset.src) {
+        img.src = img.dataset.src;
+        if (img.dataset.srcset) {
+          img.srcset = img.dataset.srcset;
+        }
+        if (img.dataset.sizes) {
+          img.sizes = img.dataset.sizes;
+        }
+        delete img.dataset.src;
+        delete img.dataset.srcset;
+        delete img.dataset.sizes;
+      }
+      
+      const video = tile.querySelector('video.abu-pg-video');
+      if (video) {
+        ensureVideoSource(video);
+        video.removeAttribute('loop');
+        video.pause();
+        video.currentTime = 0;
+        video.removeAttribute('autoplay');
+        
+        const playOverlay = tile.querySelector('.abu-pg-video-play');
+        if (playOverlay) {
+          playOverlay.style.display = 'none';
+        }
+        const darkOverlay = tile.querySelector('.abu-pg-video-overlay');
+        if (darkOverlay) {
+          darkOverlay.style.display = 'none';
+        }
+        
+        // Remove mute button from right column video tiles (can't play from here)
+        const muteButton = tile.querySelector('.abu-pg-mute');
+        if (muteButton) {
+          muteButton.remove();
+        }
+      }
+      
+      return {
+        ...item,
+        element: tile,
+      };
+    });
+    
+    const gridWidth = grid.clientWidth || rightColumn.clientWidth;
+    const cols = Math.min(3, Math.max(1, Math.floor((gridWidth + 16) / (200 + 16))));
+    const colWidth = Math.floor((gridWidth - 16 * (cols - 1)) / cols);
+    const colHeights = new Array(cols).fill(0);
+    
+    rightItems.forEach((item) => {
+      const ratio = item.masonryAspectRatio || getAspectRatio(item);
+      const height = Math.round(colWidth * ratio);
+      item.element.style.width = `${colWidth}px`;
+      item.element.style.height = `${height}px`;
+      
+      let colIndex = 0;
+      for (let i = 1; i < cols; i += 1) {
+        if (colHeights[i] < colHeights[colIndex]) {
+          colIndex = i;
+        }
+      }
+      
+      const x = (colWidth + 16) * colIndex;
+      const y = colHeights[colIndex];
+      item.element.style.transform = `translate(${x}px, ${y}px)`;
+      colHeights[colIndex] += height + 16;
+    });
+    
+    const maxHeight = Math.max(...colHeights, 0);
+    grid.style.height = `${maxHeight}px`;
+  };
+  
+  const switchDesktopSpotlightMedia = (state, newItem) => {
+    if (state.desktopSpotlight.isTransitioning) {
+      return;
+    }
+    
+    state.desktopSpotlight.isTransitioning = true;
+    state.desktopSpotlight.overlay.classList.add('is-transitioning');
+    
+    setTimeout(() => {
+      const oldVideo = state.desktopSpotlight.leftColumn.querySelector('video');
+      if (oldVideo) {
+        oldVideo.pause();
+        oldVideo.src = '';
+      }
+      
+      state.desktopSpotlight.currentItem = newItem;
+      renderDesktopSpotlightMedia(state, newItem);
+      
+      const adjacentItems = getAdjacentItems(state, newItem);
+      renderDesktopSpotlightRightColumn(state, adjacentItems);
+      
+      setTimeout(() => {
+        state.desktopSpotlight.overlay.classList.remove('is-transitioning');
+        state.desktopSpotlight.isTransitioning = false;
+      }, 220);
+    }, 200);
+  };
+  
+  const openDesktopSpotlight = (state, item) => {
+    if (!state.desktopSpotlight) {
+      createDesktopSpotlight(state);
+    }
+    
+    state.desktopSpotlight.currentItem = item;
+    
+    renderDesktopSpotlightMedia(state, item);
+    
+    const adjacentItems = getAdjacentItems(state, item);
+    renderDesktopSpotlightRightColumn(state, adjacentItems);
+    
+    lockScroll(state);
+    
+    // Store initial column count to detect breakpoint changes
+    const grid = state.desktopSpotlight.rightGrid;
+    const rightColumn = state.desktopSpotlight.rightColumn;
+    const initialGridWidth = grid.clientWidth || rightColumn.clientWidth;
+    state.desktopSpotlight.currentColumnCount = Math.min(3, Math.max(1, Math.floor((initialGridWidth + 16) / (200 + 16))));
+    
+    // Add resize handler that only re-layouts when crossing column breakpoints
+    let resizeTimeout;
+    const handleResize = () => {
+      if (resizeTimeout) {
+        clearTimeout(resizeTimeout);
+      }
+      resizeTimeout = setTimeout(() => {
+        if (state.desktopSpotlight && state.desktopSpotlight.currentItem) {
+          const currentGrid = state.desktopSpotlight.rightGrid;
+          const currentRightColumn = state.desktopSpotlight.rightColumn;
+          const gridWidth = currentGrid.clientWidth || currentRightColumn.clientWidth;
+          const newColumnCount = Math.min(3, Math.max(1, Math.floor((gridWidth + 16) / (200 + 16))));
+          
+          // Only recalculate layout if column count changed (breakpoint crossed)
+          if (newColumnCount !== state.desktopSpotlight.currentColumnCount) {
+            state.desktopSpotlight.currentColumnCount = newColumnCount;
+            const currentAdjacentItems = getAdjacentItems(state, state.desktopSpotlight.currentItem);
+            renderDesktopSpotlightRightColumn(state, currentAdjacentItems);
+          }
+        }
+      }, 150);
+    };
+    
+    state.desktopSpotlight.resizeHandler = handleResize;
+    window.addEventListener('resize', handleResize);
+    
+    requestAnimationFrame(() => {
+      state.desktopSpotlight.overlay.classList.add('is-visible');
+    });
+  };
+  
+  const closeDesktopSpotlight = (state) => {
+    if (!state.desktopSpotlight) {
+      return;
+    }
+    
+    const video = state.desktopSpotlight.leftColumn.querySelector('video');
+    if (video) {
+      video.pause();
+      video.src = '';
+    }
+    
+    // Remove resize handler
+    if (state.desktopSpotlight.resizeHandler) {
+      window.removeEventListener('resize', state.desktopSpotlight.resizeHandler);
+    }
+    
+    state.desktopSpotlight.overlay.classList.remove('is-visible');
+    
+    setTimeout(() => {
+      if (state.desktopSpotlight.overlay && state.desktopSpotlight.overlay.parentElement) {
+        state.desktopSpotlight.overlay.remove();
+      }
+      state.desktopSpotlight = null;
+      unlockScroll(state);
+    }, 260);
+  };
+
   const bindTileInteractions = (tile, item, state) => {
     const downloadBtn = tile.querySelector('.abu-pg-download');
     if (downloadBtn) {
@@ -1218,7 +2145,18 @@
 
     const video = tile.querySelector('video.abu-pg-video');
     if (!video) {
-      if (state.isSpotlightEnabled) {
+      const shouldUseDesktopSpotlight = !isMobileDevice() && 
+                                        window.matchMedia && 
+                                        window.matchMedia('(pointer: fine)').matches;
+      
+      if (shouldUseDesktopSpotlight) {
+        tile.addEventListener('click', (event) => {
+          if (event.target && event.target.closest('button')) {
+            return;
+          }
+          openDesktopSpotlight(state, item);
+        });
+      } else if (state.isSpotlightEnabled) {
         tile.addEventListener('click', (event) => {
           if (event.target && event.target.closest('button')) {
             return;
@@ -1233,11 +2171,45 @@
     video.volume = Number.isNaN(initialVolume) ? 1 : initialVolume;
     video.muted = video.volume === 0;
 
+    const shouldUseDesktopSpotlight = !isMobileDevice() && 
+                                      window.matchMedia && 
+                                      window.matchMedia('(pointer: fine)').matches;
+    
     const hasHover = window.matchMedia && window.matchMedia('(hover: hover)').matches;
-    if (hasHover) {
+    if (hasHover && !shouldUseDesktopSpotlight) {
       tile.addEventListener('mouseenter', () => {
         if (video.dataset.srcLoaded !== 'true') {
           return;
+        }
+        tile.classList.add('is-hover-playing');
+        if (!state.userActivated) {
+          video.muted = true;
+          video.volume = 0;
+        }
+        video.play().catch(() => {});
+      });
+      tile.addEventListener('mouseleave', () => {
+        if (video.dataset.srcLoaded !== 'true') {
+          return;
+        }
+        tile.classList.remove('is-hover-playing');
+        video.pause();
+        video.currentTime = 0;
+      });
+
+      video.addEventListener('ended', () => {
+        if (video.dataset.srcLoaded !== 'true') {
+          return;
+        }
+        if (tile.classList.contains('is-hover-playing')) {
+          video.currentTime = 0;
+          video.play().catch(() => {});
+        }
+      });
+    } else if (hasHover && shouldUseDesktopSpotlight) {
+      tile.addEventListener('mouseenter', () => {
+        if (video.dataset.srcLoaded !== 'true') {
+          ensureVideoSource(video);
         }
         tile.classList.add('is-hover-playing');
         if (!state.userActivated) {
@@ -1268,16 +2240,16 @@
 
     const muteBtn = tile.querySelector('.abu-pg-mute');
     if (muteBtn) {
-      muteBtn.setAttribute('aria-pressed', video.volume === 0 ? 'true' : 'false');
-      muteBtn.setAttribute('aria-label', video.volume === 0 ? 'Unmute' : 'Mute');
+      muteBtn.setAttribute('aria-pressed', video.muted ? 'true' : 'false');
+      muteBtn.setAttribute('aria-label', video.muted ? 'Unmute' : 'Mute');
       muteBtn.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
         state.userActivated = true;
-        const isMuted = video.volume === 0;
+        const isMuted = video.muted;
         const nextVolume = isMuted ? 1 : 0;
-        video.muted = nextVolume === 0;
-        setVolumeWithRamp(video, nextVolume);
+        video.muted = !isMuted;
+        video.volume = nextVolume;
         video.dataset.abuVolume = String(nextVolume);
         muteBtn.setAttribute('aria-pressed', isMuted ? 'false' : 'true');
         muteBtn.setAttribute('aria-label', isMuted ? 'Mute' : 'Unmute');
@@ -1288,10 +2260,21 @@
       if (event.target && event.target.closest('button')) {
         return;
       }
+      
+      const shouldUseDesktopSpotlight = !isMobileDevice() && 
+                                        window.matchMedia && 
+                                        window.matchMedia('(pointer: fine)').matches;
+      
+      if (shouldUseDesktopSpotlight) {
+        openDesktopSpotlight(state, item);
+        return;
+      }
+      
       if (state.isSpotlightEnabled) {
         openSpotlight(state, tile, item);
         return;
       }
+      
       state.userActivated = true;
       if (video.dataset.abuVolume && parseFloat(video.dataset.abuVolume) > 0) {
         video.muted = false;
@@ -1387,8 +2370,15 @@
       scrollLocked: false,
       scrollY: 0,
       spotlight: null,
+      desktopSpotlight: null,
       iconTemplates: {
         back: '',
+        heart: '',
+        heartFilled: '',
+        chatBubble: '',
+        share2: '',
+        speakerLoud: '',
+        speakerOff: '',
       },
       userActivated: false,
       templates: createTemplates(gallery),
@@ -1438,8 +2428,39 @@
     if (backTemplate) {
       state.iconTemplates.back = backTemplate.innerHTML;
     }
+    
+    const heartTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="heart"]');
+    if (heartTemplate) {
+      state.iconTemplates.heart = heartTemplate.innerHTML;
+    }
+    
+    const heartFilledTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="heart-filled"]');
+    if (heartFilledTemplate) {
+      state.iconTemplates.heartFilled = heartFilledTemplate.innerHTML;
+    }
+    
+    const chatBubbleTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="chat-bubble"]');
+    if (chatBubbleTemplate) {
+      state.iconTemplates.chatBubble = chatBubbleTemplate.innerHTML;
+    }
+    
+    const share2Template = gallery.querySelector('.abu-pg-icon-template[data-icon="share-2"]');
+    if (share2Template) {
+      state.iconTemplates.share2 = share2Template.innerHTML;
+    }
+    
+    const speakerLoudTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="speaker-loud"]');
+    if (speakerLoudTemplate) {
+      state.iconTemplates.speakerLoud = speakerLoudTemplate.innerHTML;
+    }
+    
+    const speakerOffTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="speaker-off"]');
+    if (speakerOffTemplate) {
+      state.iconTemplates.speakerOff = speakerOffTemplate.innerHTML;
+    }
 
-    state.allItems = buildItemsFromDOM(gallery);
+    const builtItems = buildItemsFromDOM(gallery);
+    state.allItems = builtItems;
     state.activeItems = state.allItems.slice();
     // #region agent log
     fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
@@ -1461,6 +2482,19 @@
     // #endregion agent log
 
     state.visibleCount = Math.min(state.initialCount, state.activeItems.length);
+    
+    const debouncedSort = (() => {
+      let rafId = null;
+      return () => {
+        if (rafId) {
+          cancelAnimationFrame(rafId);
+        }
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          state.allItems = sortItemsByMasonryOrder(state.allItems);
+        });
+      };
+    })();
 
     state.sentinel = document.createElement('div');
     state.sentinel.className = 'abu-pg-sentinel';
@@ -1470,6 +2504,10 @@
     state.sentinel.style.height = '1px';
 
     renderChunk(state);
+    
+    requestAnimationFrame(() => {
+      state.allItems = sortItemsByMasonryOrder(state.allItems);
+    });
 
     if ('IntersectionObserver' in window) {
       state.observer = new IntersectionObserver(
@@ -1499,11 +2537,16 @@
           rafId = null;
           const itemsToRender = state.activeItems.slice(0, state.visibleCount);
           layoutMasonry(state.container, itemsToRender, state.layoutConfig);
+          if (debouncedSort) {
+            debouncedSort();
+          }
         });
       };
     })();
 
     window.addEventListener('resize', debouncedLayout);
+    
+    state.debouncedSort = debouncedSort;
 
     state.layoutMasonry = debouncedLayout;
     state.renderItems = (items) => renderItems(state, items);

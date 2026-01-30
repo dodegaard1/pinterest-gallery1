@@ -80,9 +80,9 @@ function abu_pg_register_assets() {
 		'abu-pg-gallery',
 		ABU_PG_URL . 'assets/css/gallery.css',
 		array(),
-		'0.1.6'
+		'0.3.3'
 	);
-	$gallery_version = '0.2.4';
+	$gallery_version = '0.5.0';
 	$debug_enabled = isset( $_GET['abu_pg_debug'] ) && '0' !== sanitize_text_field( wp_unslash( $_GET['abu_pg_debug'] ) );
 	if ( is_user_logged_in() || $debug_enabled ) {
 		$gallery_version .= '-' . time();
@@ -458,6 +458,24 @@ function abu_pg_shortcode() {
 		<?php endforeach; ?>
 		<div class="abu-pg-icon-template" data-icon="caret-left" hidden>
 			<?php echo your_plugin_icon( 'caret-left', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="heart" hidden>
+			<?php echo your_plugin_icon( 'heart', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="heart-filled" hidden>
+			<?php echo your_plugin_icon( 'heart-filled', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="chat-bubble" hidden>
+			<?php echo your_plugin_icon( 'chat-bubble', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="share-2" hidden>
+			<?php echo your_plugin_icon( 'share-2', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="speaker-loud" hidden>
+			<?php echo your_plugin_icon( 'speaker-loud', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="speaker-off" hidden>
+			<?php echo your_plugin_icon( 'speaker-off', 'yp-icon' ); ?>
 		</div>
 	</div>
 	<?php
