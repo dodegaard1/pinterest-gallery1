@@ -1,0 +1,20 @@
+{
+  "$schema": "https://schemas.wp.org/trunk/block.json",
+  "apiVersion": 3,
+  "name": "abu/gallery-maker",
+  "title": "ABU Gallery Maker",
+  "category": "media",
+  "icon": "images-alt2",
+  "description": "Organize gallery media into chapters with drag-and-drop reordering.",
+  "keywords": ["gallery", "media", "chapters", "pinterest"],
+  "version": "1.0.0",
+  "textdomain": "abu-pinterest-gallery",
+  "supports": {
+    "align": ["wide", "full"],
+    "html": false,
+    "multiple": false
+  },
+  "attributes": {},
+  "editorScript": "file:./build/index.js",
+  "editorStyle": "file:./build/index.css"
+}

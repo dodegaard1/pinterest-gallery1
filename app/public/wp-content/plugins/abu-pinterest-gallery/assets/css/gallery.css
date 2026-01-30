@@ -399,11 +399,11 @@ body.abu-pg-scroll-lock {
 	inset: 0;
 	width: 100%;
 	height: 100%;
-	object-fit: cover;
+	object-fit: contain;
 	z-index: 2;
 	opacity: 1;
 	pointer-events: none;
-	transition: opacity 180ms ease;
+	transition: opacity 300ms ease;
 	-webkit-user-select: none;
 	user-select: none;
 	-webkit-touch-callout: none;

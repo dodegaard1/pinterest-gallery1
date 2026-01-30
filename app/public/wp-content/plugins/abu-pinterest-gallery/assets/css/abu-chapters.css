@@ -1,0 +1,158 @@
+/**
+ * ABU Gallery Chapters - Sticky Navigation & Chapter Spacing
+ * 
+ * Phase 2: Chapter-based gallery with sticky nav and smooth scrolling
+ */
+
+/* ======================
+   Sticky Chapter Navigation
+   ====================== */
+
+.abu-pg-chapters-nav {
+	position: sticky;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 100px;
+	background: rgb(255, 255, 255);
+	border-bottom: 1px solid rgb(230, 230, 230);
+	z-index: 100;
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+}
+
+.abu-pg-chapters-nav-inner {
+	display: flex;
+	gap: 32px;
+	align-items: stretch;
+	padding: 0 24px;
+	max-width: 100%;
+	height: 100%;
+	overflow-x: auto;
+	scrollbar-width: none; /* Firefox */
+	-ms-overflow-style: none; /* IE/Edge */
+}
+
+.abu-pg-chapters-nav-inner::-webkit-scrollbar {
+	display: none; /* Chrome/Safari */
+}
+
+.abu-pg-chapter-link {
+	font-family: "Overused Grotesk", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+	font-size: 16px;
+	line-height: 20px;
+	color: #bcbcbc;
+	text-decoration: none;
+	text-transform: uppercase;
+	letter-spacing: 1px;
+	white-space: nowrap;
+	padding: 8px 16px;
+	transition: color 0.2s ease;
+	position: relative;
+	height: 100%;
+	display: flex;
+	align-items: center;
+}
+
+.abu-pg-chapter-link::after {
+	content: '';
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 3px;
+	background: transparent;
+	transition: background-color 0.2s ease;
+}
+
+.abu-pg-chapter-link:hover::after {
+	background: rgb(200, 200, 200);
+}
+
+.abu-pg-chapter-link.is-active {
+	color: rgb(0, 0, 0);
+}
+
+.abu-pg-chapter-link.is-active::after {
+	background: rgb(0, 0, 0);
+}
+
+/* Respect reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+	.abu-pg-chapter-link {
+		transition: none;
+	}
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+	.abu-pg-chapters-nav {
+		height: 60px;
+	}
+	
+	.abu-pg-chapters-nav-inner {
+		gap: 16px;
+		padding: 0 16px;
+	}
+	
+	.abu-pg-chapter-link {
+		font-size: 14px;
+		line-height: 18px;
+		padding: 6px 12px;
+		letter-spacing: 0;
+	}
+	
+	.abu-pg-chapter-link::after {
+		height: 2px;
+	}
+}
+
+/* ======================
+   Chapter Sections & Spacing
+   ====================== */
+
+.abu-pg-chapters-wrapper {
+	position: relative;
+}
+
+.abu-pg-chapters-content {
+	/* Add top padding equal to nav height to prevent overlap */
+	padding-top: 32px;
+}
+
+.abu-pg-chapter-section {
+	/* Add spacing between chapters */
+	margin-bottom: 200px;
+	scroll-margin-top: 100px; /* Offset for sticky nav when scrolling */
+}
+
+.abu-pg-chapter-section:last-child {
+	margin-bottom: 0;
+}
+
+/* Mobile adjustments */
+@media (max-width: 768px) {
+	.abu-pg-chapters-content {
+		padding-top: 24px;
+	}
+	
+	.abu-pg-chapter-section {
+		margin-bottom: 120px;
+		scroll-margin-top: 60px;
+	}
+}
+
+/* ======================
+   Accessibility
+   ====================== */
+
+.abu-pg-chapter-link:focus-visible {
+	outline: 2px solid rgb(0, 102, 204);
+	outline-offset: 2px;
+}
+
+/* Skip to chapter link for keyboard navigation */
+.abu-pg-chapter-section:focus {
+	outline: none;
+}

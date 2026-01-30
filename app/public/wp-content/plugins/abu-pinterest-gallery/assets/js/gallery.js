@@ -2054,6 +2054,7 @@
   };
   
   const openDesktopSpotlight = (state, item) => {
+    
     if (!state.desktopSpotlight) {
       createDesktopSpotlight(state);
     }
@@ -2357,6 +2358,9 @@
   };
 
   const initGallery = (gallery) => {
+    const chapterId = gallery.dataset.chapterId || 'unknown';
+    const isDebug = isDebugEnabled();
+    
     const state = {
       container: gallery,
       layoutConfig: {
@@ -2366,7 +2370,8 @@
       isTouch: window.matchMedia && window.matchMedia('(hover: none)').matches,
       isSpotlightEnabled: window.matchMedia && window.matchMedia('(pointer: coarse)').matches,
       isIOSWebKit: isIOSWebKit(),
-      debug: isDebugEnabled(),
+      debug: isDebug,
+      chapterId: chapterId,
       scrollLocked: false,
       scrollY: 0,
       spotlight: null,
@@ -2424,37 +2429,37 @@
       );
     }
 
-    const backTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="caret-left"]');
+    const backTemplate = document.querySelector('.abu-pg-icon-template[data-icon="caret-left"]');
     if (backTemplate) {
       state.iconTemplates.back = backTemplate.innerHTML;
     }
     
-    const heartTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="heart"]');
+    const heartTemplate = document.querySelector('.abu-pg-icon-template[data-icon="heart"]');
     if (heartTemplate) {
       state.iconTemplates.heart = heartTemplate.innerHTML;
     }
     
-    const heartFilledTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="heart-filled"]');
+    const heartFilledTemplate = document.querySelector('.abu-pg-icon-template[data-icon="heart-filled"]');
     if (heartFilledTemplate) {
       state.iconTemplates.heartFilled = heartFilledTemplate.innerHTML;
     }
     
-    const chatBubbleTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="chat-bubble"]');
+    const chatBubbleTemplate = document.querySelector('.abu-pg-icon-template[data-icon="chat-bubble"]');
     if (chatBubbleTemplate) {
       state.iconTemplates.chatBubble = chatBubbleTemplate.innerHTML;
     }
     
-    const share2Template = gallery.querySelector('.abu-pg-icon-template[data-icon="share-2"]');
+    const share2Template = document.querySelector('.abu-pg-icon-template[data-icon="share-2"]');
     if (share2Template) {
       state.iconTemplates.share2 = share2Template.innerHTML;
     }
     
-    const speakerLoudTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="speaker-loud"]');
+    const speakerLoudTemplate = document.querySelector('.abu-pg-icon-template[data-icon="speaker-loud"]');
     if (speakerLoudTemplate) {
       state.iconTemplates.speakerLoud = speakerLoudTemplate.innerHTML;
     }
     
-    const speakerOffTemplate = gallery.querySelector('.abu-pg-icon-template[data-icon="speaker-off"]');
+    const speakerOffTemplate = document.querySelector('.abu-pg-icon-template[data-icon="speaker-off"]');
     if (speakerOffTemplate) {
       state.iconTemplates.speakerOff = speakerOffTemplate.innerHTML;
     }
