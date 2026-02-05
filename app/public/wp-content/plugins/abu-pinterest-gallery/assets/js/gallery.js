@@ -89,6 +89,147 @@
   const logDeepLinkTiming = () => {};
   // #endregion agent log
 
+  /**
+   * Auth state refresh helper
+   * 
+   * Fetches current auth state from server and updates UI gating.
+   * Called when spotlight opens and on visibility change to prevent
+   * stale client-side state from showing buttons incorrectly.
+   */
+  let authStateCache = null;
+  let authStateLastFetch = 0;
+  const AUTH_STATE_CACHE_MS = 30000; // Cache for 30 seconds
+
+  const refreshAuthState = async () => {
+    // Use cached value if recent
+    const now = Date.now();
+    if (authStateCache !== null && (now - authStateLastFetch) < AUTH_STATE_CACHE_MS) {
+      return authStateCache;
+    }
+
+    try {
+      const config = window.abuUsersConfig || window.abuPgConfig;
+      if (!config || !config.ajaxUrl) {
+        return { isLoggedIn: false };
+      }
+
+      const response = await fetch(`${config.ajaxUrl}?action=abu_users_get_auth_state`, {
+        method: 'GET',
+        credentials: 'same-origin'
+      });
+
+      if (!response.ok) {
+        return { isLoggedIn: false };
+      }
+
+      const data = await response.json();
+      if (data.success && data.data) {
+        authStateCache = data.data;
+        authStateLastFetch = now;
+        return data.data;
+      }
+
+      return { isLoggedIn: false };
+    } catch (error) {
+      console.warn('[ABU] Auth state refresh failed:', error);
+      return { isLoggedIn: false };
+    }
+  };
+
+  /**
+   * Update UI based on auth state
+   * 
+   * Shows/hides gated buttons (download, share, like, comment) based on login state.
+   */
+  const updateAuthGating = (authState) => {
+    const isLoggedIn = authState && authState.isLoggedIn;
+
+    // Update global config
+    if (window.abuPgConfig) {
+      window.abuPgConfig.isLoggedIn = isLoggedIn;
+      window.abuPgConfig.canDownload = isLoggedIn;
+      window.abuPgConfig.canShare = isLoggedIn;
+      window.abuPgConfig.canLike = isLoggedIn;
+      window.abuPgConfig.canComment = isLoggedIn;
+    }
+
+    // Update spotlight UI if open
+    const spotlight = document.querySelector('.abu-pg-spotlight-overlay');
+    if (spotlight && spotlight.classList.contains('is-visible')) {
+      // Update download/save button visibility
+      const saveBtn = spotlight.querySelector('.abu-pg-save');
+      if (saveBtn) {
+        saveBtn.style.display = isLoggedIn ? '' : 'none';
+      }
+
+      // Update share button visibility (desktop Web Share API button)
+      const shareBtn = spotlight.querySelector('.abu-pg-share-btn');
+      if (shareBtn) {
+        shareBtn.style.display = isLoggedIn ? '' : 'none';
+      }
+
+      // Update like button state
+      const likeBtn = spotlight.querySelector('.abu-pg-like');
+      if (likeBtn) {
+        if (!isLoggedIn) {
+          // Add login prompt handler
+          const existingHandler = likeBtn.onclick;
+          if (!existingHandler || !existingHandler.toString().includes('loginUrl')) {
+            likeBtn.onclick = (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              if (window.abuPgConfig && window.abuPgConfig.loginUrl) {
+                window.location.href = window.abuPgConfig.loginUrl;
+              }
+            };
+          }
+        }
+      }
+
+      // Update comment bar
+      const commentBar = spotlight.querySelector('.abu-pg-spotlight-comment-bar');
+      if (commentBar) {
+        const commentInput = commentBar.querySelector('input[type="text"]');
+        if (commentInput) {
+          if (isLoggedIn) {
+            commentBar.classList.remove('logged-out');
+            commentInput.placeholder = 'Add a comment...';
+            commentInput.readOnly = false;
+          } else {
+            commentBar.classList.add('logged-out');
+            commentInput.placeholder = 'Log in to comment';
+            commentInput.readOnly = true;
+            // Add login prompt handler
+            commentInput.onclick = (event) => {
+              event.preventDefault();
+              if (window.abuPgConfig && window.abuPgConfig.loginUrl) {
+                window.location.href = window.abuPgConfig.loginUrl;
+              }
+            };
+          }
+        }
+      }
+    }
+
+    // Update masonry tile buttons
+    document.querySelectorAll('.abu-pg-tile .abu-pg-download').forEach(btn => {
+      btn.style.display = isLoggedIn ? '' : 'none';
+    });
+  };
+
+  /**
+   * Visibility change handler
+   * 
+   * Refreshes auth state when page becomes visible again to catch
+   * login/logout that happened in another tab.
+   */
+  document.addEventListener('visibilitychange', async () => {
+    if (!document.hidden) {
+      const authState = await refreshAuthState();
+      updateAuthGating(authState);
+    }
+  });
+
   const downloadFile = (url) => {
     const link = document.createElement('a');
     link.href = url;
@@ -1810,6 +1951,13 @@
     const entryMode = tile ? 'tap-from-masonry' : 'direct-url';
     item._entryMode = entryMode;
     
+    // Refresh auth state when opening spotlight
+    refreshAuthState().then(authState => {
+      updateAuthGating(authState);
+    }).catch(err => {
+      console.warn('[ABU] Failed to refresh auth state:', err);
+    });
+    
     // DEBUG: Log openSpotlight entry with detailed context
     if (window.ABU_DEBUG === true) {
       console.log('[ABU_DEBUG] openSpotlight:entry', {
@@ -2872,26 +3020,54 @@
       muteBtn.remove();
     }
 
-    const existingSave = tile.querySelector('.abu-pg-save');
-    if (state.isTouch) {
-      if (isSpotlight) {
-        if (!existingSave) {
-          const saveBtn = document.createElement('button');
-          saveBtn.type = 'button';
-          saveBtn.className = 'abu-pg-save';
-          tile.appendChild(saveBtn);
+    // Ensure button container exists for mobile spotlight
+    if (state.isTouch && isSpotlight) {
+      let buttonContainer = tile.querySelector('.abu-pg-tile-button-container');
+      
+      // Create container if it doesn't exist
+      if (!buttonContainer) {
+        buttonContainer = document.createElement('div');
+        buttonContainer.className = 'abu-pg-tile-button-container';
+        tile.appendChild(buttonContainer);
+      }
+      
+      // Handle save button
+      const existingSave = tile.querySelector('.abu-pg-save');
+      if (!existingSave) {
+        const saveBtn = document.createElement('button');
+        saveBtn.type = 'button';
+        saveBtn.className = 'abu-pg-save';
+        buttonContainer.appendChild(saveBtn);
+      } else if (existingSave.parentElement !== buttonContainer) {
+        // Move to container if not already there
+        buttonContainer.appendChild(existingSave);
+      }
+      
+      // Move mute button to container if it exists and not already there
+      if (muteBtn && muteBtn.parentElement !== buttonContainer) {
+        buttonContainer.appendChild(muteBtn);
+      }
+      
+      // Handle save button contents and auth gating
+      const spotlightSave = buttonContainer.querySelector('.abu-pg-save');
+      if (spotlightSave) {
+        ensureSaveButtonContents(spotlightSave);
+        
+        // Hide share button if user is not logged in
+        const isLoggedIn = window.abuPgConfig && window.abuPgConfig.isLoggedIn;
+        if (!isLoggedIn) {
+          spotlightSave.style.display = 'none';
+        }
+      }
+    } else {
+      // Non-spotlight: handle save button removal
+      const existingSave = tile.querySelector('.abu-pg-save');
+      if (state.isTouch) {
+        if (existingSave) {
+          existingSave.remove();
         }
       } else if (existingSave) {
         existingSave.remove();
-      }
-    } else if (existingSave) {
-      existingSave.remove();
-    }
-
-    if (state.isTouch && isSpotlight) {
-      const spotlightSave = tile.querySelector('.abu-pg-save');
-      if (spotlightSave) {
-        ensureSaveButtonContents(spotlightSave);
       }
     }
 
@@ -3060,21 +3236,30 @@
     buttonsTop.appendChild(buttonsRight);
     mediaContainer.appendChild(buttonsTop);
     
-    // Hide download button if user is not logged in
+    // Gate buttons based on login state
     const isLoggedIn = window.abuPgConfig && window.abuPgConfig.isLoggedIn;
-    if (!isLoggedIn && saveBtn) {
-      saveBtn.style.display = 'none';
+    
+    // Show/hide download button based on auth state
+    if (saveBtn) {
+      saveBtn.style.display = isLoggedIn ? '' : 'none';
+    }
+    
+    // Show/hide share button based on auth state
+    if (shareBtn) {
+      shareBtn.style.display = isLoggedIn ? '' : 'none';
     }
     
     // Add login prompt to like button if not logged in
-    if (!isLoggedIn && likeBtn) {
-      likeBtn.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (window.abuPgConfig && window.abuPgConfig.loginUrl) {
-          window.location.href = window.abuPgConfig.loginUrl;
-        }
-      });
+    if (likeBtn) {
+      if (!isLoggedIn) {
+        likeBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (window.abuPgConfig && window.abuPgConfig.loginUrl) {
+            window.location.href = window.abuPgConfig.loginUrl;
+          }
+        });
+      }
     }
     
     const mediaWrapper = document.createElement('div');
