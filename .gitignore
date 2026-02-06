@@ -40,3 +40,4 @@ app/public/xmlrpc.php
 app/public/license.txt
 app/public/readme.html
 app/public/.htaccess
+.cursor/

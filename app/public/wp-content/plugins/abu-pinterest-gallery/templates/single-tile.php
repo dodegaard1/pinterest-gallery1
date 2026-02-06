@@ -76,6 +76,7 @@ wp_localize_script(
 		'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
 		'nonce'        => wp_create_nonce( 'abu_pg_ajax' ),
 		'isLoggedIn'   => is_user_logged_in(),
+		'currentUserId' => get_current_user_id(), // Current user ID (0 if logged out)
 		'canDownload'  => is_user_logged_in(),
 		'canShare'     => is_user_logged_in(),
 		'canLike'      => is_user_logged_in(),

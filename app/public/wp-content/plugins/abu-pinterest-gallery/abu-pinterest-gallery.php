@@ -1513,6 +1513,14 @@ function abu_pg_render_tile( $tile_post_id, $debug_enabled = false, $kit_id = 0 
 			height="<?php echo esc_attr( $media_height ); ?>"
 			decoding="async"
 		>
+		<!-- Button container for image tiles (download only, no mute) -->
+		<div class="abu-pg-tile-button-container">
+			<?php if ( $can_download ) : ?>
+				<button type="button" class="abu-pg-download yp-icon-button" aria-label="Download">
+					<?php echo your_plugin_icon( 'download', 'yp-icon' ); ?>
+				</button>
+			<?php endif; ?>
+		</div>
 	<?php else : ?>
 			<video class="abu-pg-video" playsinline preload="metadata"
 				data-src-original="<?php echo esc_url( $url ); ?>"
@@ -1897,6 +1905,12 @@ function abu_pg_render_full_gallery( $post_id, $chapters, $debug_enabled ) {
 		<div class="abu-pg-icon-template" data-icon="share-2" hidden>
 			<?php echo your_plugin_icon( 'share-2', 'yp-icon' ); ?>
 		</div>
+		<div class="abu-pg-icon-template" data-icon="paper-plane" hidden>
+			<?php echo your_plugin_icon( 'paper-plane', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="dots-horizontal" hidden>
+			<?php echo your_plugin_icon( 'dots-horizontal', 'yp-icon' ); ?>
+		</div>
 		<div class="abu-pg-icon-template" data-icon="speaker-loud" hidden>
 			<?php echo your_plugin_icon( 'speaker-loud', 'yp-icon' ); ?>
 		</div>
@@ -2000,6 +2014,7 @@ function abu_pg_shortcode( $atts = array() ) {
 			'ajaxUrl'      => admin_url( 'admin-ajax.php' ),
 			'nonce'        => wp_create_nonce( 'abu_pg_ajax' ),
 			'isLoggedIn'   => is_user_logged_in(),
+			'currentUserId' => get_current_user_id(), // Current user ID (0 if logged out)
 			'canDownload'  => is_user_logged_in(),
 			'canShare'     => is_user_logged_in(),
 			'canLike'      => is_user_logged_in(),
@@ -2082,6 +2097,68 @@ add_filter( 'template_include', 'abu_pg_tile_template_include' );
  */
 
 /**
+ * AJAX handler for submitting comments
+ */
+function abu_pg_ajax_submit_comment() {
+	// Verify nonce
+	check_ajax_referer( 'abu_pg_ajax', 'nonce' );
+	
+	// Check if user is logged in
+	if ( ! is_user_logged_in() ) {
+		wp_send_json_error( array( 'message' => 'You must be logged in to comment.' ) );
+	}
+	
+	$tile_id = isset( $_POST['tile_id'] ) ? absint( $_POST['tile_id'] ) : 0;
+	$comment_text = isset( $_POST['comment'] ) ? sanitize_textarea_field( $_POST['comment'] ) : '';
+	$user_id = get_current_user_id();
+	
+	// Validate
+	if ( ! $tile_id || ! $comment_text ) {
+		wp_send_json_error( array( 'message' => 'Invalid comment data.' ) );
+	}
+	
+	// Check permission
+	if ( ! abu_pg_user_can_comment_on_tile( $user_id, $tile_id ) ) {
+		wp_send_json_error( array( 'message' => 'You do not have permission to comment.' ) );
+	}
+	
+	// Get current user
+	$current_user = wp_get_current_user();
+	
+	// Insert comment
+	$comment_data = array(
+		'comment_post_ID'      => $tile_id,
+		'comment_author'       => $current_user->display_name,
+		'comment_author_email' => $current_user->user_email,
+		'comment_content'      => $comment_text,
+		'user_id'              => $user_id,
+		'comment_approved'     => 1, // Auto-approve
+	);
+	
+	$comment_id = wp_insert_comment( $comment_data );
+	
+	if ( ! $comment_id ) {
+		wp_send_json_error( array( 'message' => 'Failed to save comment.' ) );
+	}
+	
+	// Get comment data for response
+	$comment = get_comment( $comment_id );
+	
+	wp_send_json_success(
+		array(
+			'comment' => array(
+				'id'      => $comment_id,
+				'author'  => $comment->comment_author,
+				'content' => $comment->comment_content,
+				'date'    => get_comment_date( 'c', $comment_id ), // ISO 8601 format with timezone
+				'userId'  => absint( $comment->user_id ), // User ID of comment author
+			),
+		)
+	);
+}
+add_action( 'wp_ajax_abu_pg_submit_comment', 'abu_pg_ajax_submit_comment' );
+
+/**
  * Enforce comment permissions server-side for tile posts.
  * 
  * SECURITY: Blocks unauthorized comment submissions at the server level.
@@ -2127,8 +2204,8 @@ add_filter( 'preprocess_comment', 'abu_pg_enforce_tile_comment_permissions', 10,
 /**
  * AJAX handler to load comments for a tile.
  * 
- * Returns HTML for comments list and comment form.
- * Permission-gated: only returns content if user can comment on the tile.
+ * Returns JSON array of comments.
+ * Permission-gated: only returns content if user can view the tile.
  */
 function abu_pg_ajax_load_tile_comments() {
 	$tile_id = isset( $_GET['tile_id'] ) ? absint( $_GET['tile_id'] ) : 0;
@@ -2142,91 +2219,95 @@ function abu_pg_ajax_load_tile_comments() {
 		wp_send_json_error( array( 'message' => 'Permission denied' ), 403 );
 	}
 	
-	$can_comment = abu_pg_user_can_comment_on_tile( 0, $tile_id );
-	
 	// Get comments
 	$comments = get_comments(
 		array(
 			'post_id' => $tile_id,
 			'status'  => 'approve',
-			'order'   => 'ASC',
+			'order'   => 'DESC', // Newest first
 		)
 	);
 	
-	ob_start();
-	
-	if ( $can_comment ) {
-		?>
-		<div class="abu-pg-comments-wrapper">
-			<h3 class="abu-pg-comments-title"><?php _e( 'Comments', 'abu-pg' ); ?></h3>
-			
-			<?php if ( ! empty( $comments ) ) : ?>
-				<div class="abu-pg-comments-list">
-					<?php
-					wp_list_comments(
-						array(
-							'style'       => 'div',
-							'short_ping'  => true,
-							'avatar_size' => 32,
-						),
-						$comments
-					);
-					?>
-				</div>
-			<?php endif; ?>
-			
-			<?php if ( comments_open( $tile_id ) ) : ?>
-				<div class="abu-pg-comment-form-wrapper">
-					<?php
-					// Set global post for comment form
-					global $post;
-					$original_post = $post;
-					$post = get_post( $tile_id );
-					setup_postdata( $post );
-					
-					comment_form(
-						array(
-							'title_reply'         => __( 'Leave a Comment', 'abu-pg' ),
-							'logged_in_as'        => null,
-							'comment_notes_after' => '',
-							'class_submit'        => 'submit abu-pg-submit-comment',
-							'label_submit'        => __( 'Post Comment', 'abu-pg' ),
-							'comment_field'       => '<textarea id="comment" name="comment" cols="45" rows="4" maxlength="65525" required="required" placeholder="' . esc_attr__( 'Your comment...', 'abu-pg' ) . '"></textarea>',
-						)
-					);
-					
-					wp_reset_postdata();
-					$post = $original_post;
-					?>
-				</div>
-			<?php endif; ?>
-		</div>
-		<?php
-	} else {
-		?>
-		<div class="abu-pg-comments-wrapper">
-			<?php if ( ! is_user_logged_in() ) : ?>
-				<p><?php _e( 'Please log in to view and post comments.', 'abu-pg' ); ?></p>
-				<p><a href="<?php echo esc_url( wp_login_url( get_permalink( $tile_id ) ) ); ?>"><?php _e( 'Log In', 'abu-pg' ); ?></a></p>
-			<?php else : ?>
-				<p><?php _e( 'Comments are not available for this content.', 'abu-pg' ); ?></p>
-			<?php endif; ?>
-		</div>
-		<?php
+	// Format comments for JSON response
+	$formatted_comments = array();
+	foreach ( $comments as $comment ) {
+		$formatted_comments[] = array(
+			'id'      => $comment->comment_ID,
+			'author'  => $comment->comment_author,
+			'content' => $comment->comment_content,
+			'date'    => get_comment_date( 'c', $comment->comment_ID ), // ISO 8601 format with timezone
+			'userId'  => absint( $comment->user_id ), // User ID of comment author (0 if not logged in)
+		);
 	}
-	
-	$html = ob_get_clean();
 	
 	wp_send_json_success(
 		array(
-			'html'       => $html,
-			'canComment' => $can_comment,
-			'count'      => count( $comments ),
+			'comments' => $formatted_comments,
+			'count'    => count( $comments ),
 		)
 	);
 }
 add_action( 'wp_ajax_abu_pg_load_tile_comments', 'abu_pg_ajax_load_tile_comments' );
 add_action( 'wp_ajax_nopriv_abu_pg_load_tile_comments', 'abu_pg_ajax_load_tile_comments' );
+
+/**
+ * AJAX handler for deleting a comment.
+ * 
+ * Security requirements:
+ * - User must be logged in
+ * - User must be the author of the comment
+ * - Comment must exist and belong to a tile post
+ */
+function abu_pg_ajax_delete_comment() {
+	// Verify nonce
+	check_ajax_referer( 'abu_pg_ajax', 'nonce' );
+	
+	// Check if user is logged in
+	if ( ! is_user_logged_in() ) {
+		wp_send_json_error( array( 'message' => 'You must be logged in to delete comments.' ) );
+	}
+	
+	$comment_id = isset( $_POST['comment_id'] ) ? absint( $_POST['comment_id'] ) : 0;
+	$user_id = get_current_user_id();
+	
+	// Validate comment ID
+	if ( ! $comment_id ) {
+		wp_send_json_error( array( 'message' => 'Invalid comment ID.' ) );
+	}
+	
+	// Get comment
+	$comment = get_comment( $comment_id );
+	
+	if ( ! $comment ) {
+		wp_send_json_error( array( 'message' => 'Comment not found.' ) );
+	}
+	
+	// Verify comment belongs to current user
+	if ( absint( $comment->user_id ) !== $user_id ) {
+		wp_send_json_error( array( 'message' => 'You can only delete your own comments.' ) );
+	}
+	
+	// Verify comment is on a tile post (optional security check)
+	$post = get_post( $comment->comment_post_ID );
+	if ( ! $post || 'abu_pg_tile' !== $post->post_type ) {
+		wp_send_json_error( array( 'message' => 'Invalid comment type.' ) );
+	}
+	
+	// Optional: Verify user can still comment on this tile (ensures they still have access)
+	if ( ! abu_pg_user_can_comment_on_tile( $user_id, $comment->comment_post_ID ) ) {
+		wp_send_json_error( array( 'message' => 'You no longer have permission to modify comments on this tile.' ) );
+	}
+	
+	// Delete comment (force delete, bypass trash)
+	$deleted = wp_delete_comment( $comment_id, true );
+	
+	if ( ! $deleted ) {
+		wp_send_json_error( array( 'message' => 'Failed to delete comment.' ) );
+	}
+	
+	wp_send_json_success( array( 'message' => 'Comment deleted successfully.' ) );
+}
+add_action( 'wp_ajax_abu_pg_delete_comment', 'abu_pg_ajax_delete_comment' );
 
 /**
  * Filter comment post redirect to return JSON for AJAX submissions.

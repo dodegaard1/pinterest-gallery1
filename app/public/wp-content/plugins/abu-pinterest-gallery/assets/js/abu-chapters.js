@@ -15,6 +15,14 @@
 	}
 	
 	function init() {
+		// Skip initialization if we're in direct mode (spotlight-first rendering)
+		// The background gallery will be initialized separately by gallery.js
+		const directMode = document.querySelector('.abu-pg-direct-mode');
+		if (directMode) {
+			console.log('[Chapters] Skipping init - direct mode detected');
+			return;
+		}
+		
 		const wrapper = document.querySelector('.abu-pg-chapters-wrapper');
 		if (!wrapper) return;
 		
@@ -99,18 +107,24 @@
 				}
 			});
 			
-			// Update active state if changed
-			if (newActiveSlug && newActiveSlug !== currentActiveSlug) {
-				currentActiveSlug = newActiveSlug;
-				
-				// Remove active class from all links
-				links.forEach(link => link.classList.remove('is-active'));
-				
-				// Add active class to current link
-				if (linkMap[newActiveSlug]) {
-					linkMap[newActiveSlug].classList.add('is-active');
-				}
+		// Update active state if changed
+		if (newActiveSlug && newActiveSlug !== currentActiveSlug) {
+			currentActiveSlug = newActiveSlug;
+			
+			// Remove active class from all links
+			links.forEach(link => link.classList.remove('is-active'));
+			
+			// Add active class to current link
+			if (linkMap[newActiveSlug]) {
+				linkMap[newActiveSlug].classList.add('is-active');
 			}
+			
+			// Update URL with chapter parameter (but not during initial load to prevent interference with deep-linking)
+			if (typeof window.URLStateManager !== 'undefined' && 
+			    !window.URLStateManager.isInitialLoad()) {
+				window.URLStateManager.setChapter(newActiveSlug);
+			}
+		}
 		}, observerOptions);
 		
 		// Observe all chapter sections

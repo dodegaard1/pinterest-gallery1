@@ -175,6 +175,46 @@ function vba_on_attachment_deleted( $attachment_id ) {
 }
 add_action( 'delete_attachment', 'vba_on_attachment_deleted' );
 
+function vba_hide_derivatives_from_modal( $query ) {
+	$meta_query = isset( $query['meta_query'] ) ? $query['meta_query'] : array();
+	
+	if ( ! is_array( $meta_query ) ) {
+		$meta_query = array();
+	}
+
+	$meta_query[] = array(
+		'key'     => '_abu_video_quality',
+		'compare' => 'NOT EXISTS',
+	);
+
+	$query['meta_query'] = $meta_query;
+	return $query;
+}
+add_filter( 'ajax_query_attachments_args', 'vba_hide_derivatives_from_modal' );
+
+function vba_hide_derivatives_from_library( $query ) {
+	if ( ! is_admin() || ! $query->is_main_query() ) {
+		return;
+	}
+
+	$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+	if ( ! $screen || 'upload' !== $screen->id ) {
+		return;
+	}
+
+	if ( 'attachment' !== $query->get( 'post_type' ) ) {
+		return;
+	}
+
+	$meta_query = (array) $query->get( 'meta_query' );
+	$meta_query[] = array(
+		'key'     => '_abu_video_quality',
+		'compare' => 'NOT EXISTS',
+	);
+	$query->set( 'meta_query', $meta_query );
+}
+add_action( 'pre_get_posts', 'vba_hide_derivatives_from_library' );
+
 add_action( 'admin_post_vba_run_queue_now', 'vba_handle_run_queue_now' );
 add_action( 'admin_post_vba_sync_derivatives', 'vba_handle_sync_derivatives' );
 

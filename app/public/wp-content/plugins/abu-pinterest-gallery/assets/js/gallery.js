@@ -2667,9 +2667,50 @@
     tiles.forEach((tile) => {
       if (tile.dataset.type === 'image' && !templates.image) {
         templates.image = tile.cloneNode(true);
+        
+        // #region agent log - image template created
+        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            location: 'gallery.js:2669',
+            message: 'Image template created',
+            data: {
+              hasButtonContainer: !!templates.image.querySelector('.abu-pg-tile-button-container'),
+              hasDownloadBtn: !!templates.image.querySelector('.abu-pg-download'),
+              tileHtml: templates.image.outerHTML.substring(0, 500)
+            },
+            timestamp: Date.now(),
+            sessionId: 'template-debug',
+            runId: 'v4',
+            hypothesisId: 'TEMPLATE_CREATE'
+          })
+        }).catch(() => {});
+        // #endregion agent log
       }
       if (tile.dataset.type === 'video' && !templates.video) {
         templates.video = tile.cloneNode(true);
+        
+        // #region agent log - video template created
+        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            location: 'gallery.js:2672',
+            message: 'Video template created',
+            data: {
+              hasButtonContainer: !!templates.video.querySelector('.abu-pg-tile-button-container'),
+              hasDownloadBtn: !!templates.video.querySelector('.abu-pg-download'),
+              hasMuteBtn: !!templates.video.querySelector('.abu-pg-mute'),
+              tileHtml: templates.video.outerHTML.substring(0, 500)
+            },
+            timestamp: Date.now(),
+            sessionId: 'template-debug',
+            runId: 'v4',
+            hypothesisId: 'TEMPLATE_CREATE'
+          })
+        }).catch(() => {});
+        // #endregion agent log
       }
     });
     return templates;
@@ -2772,6 +2813,32 @@
     
     const template = item.type === 'video' ? templates.video : templates.image;
     const tile = template ? template.cloneNode(true) : document.createElement('div');
+    
+    // #region agent log - check clone immediately
+    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        location: 'gallery.js:2815',
+        message: 'Tile cloned from template',
+        data: {
+          itemType: item.type,
+          itemId: item.id,
+          context,
+          hasTemplate: !!template,
+          clonedTileHasButtonContainer: !!tile.querySelector('.abu-pg-tile-button-container'),
+          clonedTileHasDownloadBtn: !!tile.querySelector('.abu-pg-download'),
+          templateHasButtonContainer: template ? !!template.querySelector('.abu-pg-tile-button-container') : false,
+          templateHasDownloadBtn: template ? !!template.querySelector('.abu-pg-download') : false
+        },
+        timestamp: Date.now(),
+        sessionId: 'clone-debug',
+        runId: 'v4',
+        hypothesisId: 'CLONE_CHECK'
+      })
+    }).catch(() => {});
+    // #endregion agent log
+    
     tile.className = 'abu-pg-tile';
     tile.dataset.id = item.id;
     tile.dataset.type = item.type;
@@ -3002,6 +3069,30 @@
 
     const downloadBtn = tile.querySelector('.abu-pg-download');
     if (downloadBtn) {
+      // #region agent log - download button found
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:3006',
+          message: 'Download button found',
+          data: {
+            context,
+            isSpotlight,
+            isTouchDevice: state.isTouch,
+            willRemove: !isSpotlight && state.isTouch,
+            willShow: isSpotlight || !state.isTouch,
+            itemType: item.type,
+            itemId: item.id
+          },
+          timestamp: Date.now(),
+          sessionId: 'button-debug',
+          runId: 'v3',
+          hypothesisId: 'BUTTON_FOUND'
+        })
+      }).catch(() => {});
+      // #endregion agent log
+      
       // Show download button on both mobile and desktop in spotlight
       // Mobile: downloads original for print/high-quality
       // Desktop: downloads original as well
@@ -3013,6 +3104,29 @@
       } else {
         downloadBtn.style.display = '';
       }
+    } else {
+      // #region agent log - download button NOT found
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:3039',
+          message: 'Download button NOT found',
+          data: {
+            context,
+            isSpotlight,
+            itemType: item.type,
+            itemId: item.id,
+            tileClasses: tile.className,
+            hasButtonContainer: !!tile.querySelector('.abu-pg-tile-button-container')
+          },
+          timestamp: Date.now(),
+          sessionId: 'button-debug',
+          runId: 'v3',
+          hypothesisId: 'BUTTON_MISSING'
+        })
+      }).catch(() => {});
+      // #endregion agent log
     }
 
     const muteBtn = tile.querySelector('.abu-pg-mute');
@@ -3126,8 +3240,237 @@
     return sortedItems.slice(start, end).filter(item => item.id !== currentItem.id);
   };
   
+  /**
+   * Load comments for a tile via AJAX
+   */
+  const loadComments = async (tileId, commentsList) => {
+    try {
+      const response = await fetch(`${window.abuPgConfig.ajaxUrl}?action=abu_pg_load_tile_comments&tile_id=${tileId}`);
+      const data = await response.json();
+      
+      if (data.success && data.data.comments) {
+        commentsList.innerHTML = '';
+        data.data.comments.forEach(comment => {
+          addCommentToList(commentsList, comment);
+        });
+      }
+    } catch (error) {
+      console.error('Failed to load comments:', error);
+    }
+  };
+  
+  /**
+   * Add a single comment to the comments list
+   */
+  const addCommentToList = (commentsList, comment) => {
+    const commentEl = document.createElement('div');
+    commentEl.className = 'abu-pg-comment';
+    commentEl.dataset.commentId = comment.id;
+    
+    // Left cluster: avatar + text block
+    const leftCluster = document.createElement('div');
+    leftCluster.className = 'abu-pg-comment-left';
+    
+    // Avatar (circular with initials)
+    const avatarEl = document.createElement('div');
+    avatarEl.className = 'abu-pg-comment-avatar';
+    const initials = comment.author ? comment.author.charAt(0).toUpperCase() : '?';
+    avatarEl.textContent = initials;
+    
+    // Text block
+    const textBlock = document.createElement('div');
+    textBlock.className = 'abu-pg-comment-text-block';
+    
+    // Line 1: Name + Comment (same baseline)
+    const nameLine = document.createElement('div');
+    nameLine.className = 'abu-pg-comment-name-line';
+    
+    const authorEl = document.createElement('span');
+    authorEl.className = 'abu-pg-comment-author';
+    authorEl.textContent = comment.author;
+    
+    const contentEl = document.createElement('span');
+    contentEl.className = 'abu-pg-comment-content';
+    contentEl.textContent = comment.content;
+    
+    nameLine.appendChild(authorEl);
+    nameLine.appendChild(contentEl);
+    
+    // Line 2: Timestamp + Ellipsis
+    const metaLine = document.createElement('div');
+    metaLine.className = 'abu-pg-comment-meta-line';
+    
+    const dateEl = document.createElement('span');
+    dateEl.className = 'abu-pg-comment-date';
+    dateEl.textContent = formatCommentDate(comment.date);
+    
+    metaLine.appendChild(dateEl);
+    
+    // Only show actions ellipsis if this is the current user's comment
+    const currentUserId = window.abuPgConfig && window.abuPgConfig.currentUserId ? parseInt(window.abuPgConfig.currentUserId, 10) : 0;
+    const commentUserId = comment.userId || 0;
+    
+    if (currentUserId > 0 && currentUserId === commentUserId) {
+      const actionsEl = document.createElement('button');
+      actionsEl.type = 'button';
+      actionsEl.className = 'abu-pg-comment-actions';
+      actionsEl.title = 'Comment options';
+      actionsEl.setAttribute('aria-label', 'Comment options');
+      
+      // Use dots-horizontal icon from Radix
+      const iconTemplate = document.querySelector('.abu-pg-icon-template[data-icon="dots-horizontal"]');
+      if (iconTemplate) {
+        actionsEl.innerHTML = iconTemplate.innerHTML;
+      } else {
+        actionsEl.textContent = '…'; // Fallback to text if icon not loaded
+      }
+      
+      // Track delete mode state
+      let isDeleteMode = false;
+      
+      // Click handler for toggling delete mode
+      const handleActionsClick = (e) => {
+        e.stopPropagation();
+        
+        if (!isDeleteMode) {
+          // Enter delete mode
+          isDeleteMode = true;
+          actionsEl.classList.add('is-delete-mode');
+          actionsEl.innerHTML = '<span class="abu-pg-comment-actions-delete">Delete</span>';
+          actionsEl.setAttribute('aria-label', 'Delete comment');
+          
+          // Add outside click handler to cancel
+          setTimeout(() => {
+            document.addEventListener('click', handleOutsideClick);
+            document.addEventListener('keydown', handleEscapeKey);
+          }, 0);
+        } else {
+          // Execute delete
+          deleteComment(comment.id, commentEl, actionsEl);
+        }
+      };
+      
+      // Cancel delete mode on outside click
+      const handleOutsideClick = (e) => {
+        if (!actionsEl.contains(e.target) && isDeleteMode) {
+          restoreDotsUI();
+        }
+      };
+      
+      // Cancel delete mode on Escape key
+      const handleEscapeKey = (e) => {
+        if (e.key === 'Escape' && isDeleteMode) {
+          restoreDotsUI();
+        }
+      };
+      
+      // Restore dots UI
+      const restoreDotsUI = () => {
+        isDeleteMode = false;
+        actionsEl.classList.remove('is-delete-mode');
+        if (iconTemplate) {
+          actionsEl.innerHTML = iconTemplate.innerHTML;
+        } else {
+          actionsEl.textContent = '…';
+        }
+        actionsEl.setAttribute('aria-label', 'Comment options');
+        
+        document.removeEventListener('click', handleOutsideClick);
+        document.removeEventListener('keydown', handleEscapeKey);
+      };
+      
+      // Delete comment function
+      const deleteComment = async (commentId, commentElement, actionsButton) => {
+        try {
+          const formData = new FormData();
+          formData.append('action', 'abu_pg_delete_comment');
+          formData.append('nonce', window.abuPgConfig.nonce);
+          formData.append('comment_id', commentId);
+          
+          const response = await fetch(window.abuPgConfig.ajaxUrl, {
+            method: 'POST',
+            body: formData
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            // Remove comment from DOM with fade-out animation
+            commentElement.style.opacity = '0';
+            commentElement.style.transform = 'translateY(-10px)';
+            commentElement.style.transition = 'opacity 200ms ease, transform 200ms ease';
+            
+            setTimeout(() => {
+              commentElement.remove();
+            }, 200);
+          } else {
+            // Restore dots UI on failure
+            restoreDotsUI();
+            console.error('Failed to delete comment:', data.data?.message || 'Unknown error');
+            alert('Failed to delete comment. Please try again.');
+          }
+        } catch (error) {
+          // Restore dots UI on error
+          restoreDotsUI();
+          console.error('Comment deletion error:', error);
+          alert('An error occurred while deleting the comment.');
+        }
+      };
+      
+      actionsEl.addEventListener('click', handleActionsClick);
+      metaLine.appendChild(actionsEl);
+    }
+    
+    textBlock.appendChild(nameLine);
+    textBlock.appendChild(metaLine);
+    
+    leftCluster.appendChild(avatarEl);
+    leftCluster.appendChild(textBlock);
+    
+    commentEl.appendChild(leftCluster);
+    
+    // Prepend new comments to show them at the top
+    if (commentsList.firstChild) {
+      commentsList.insertBefore(commentEl, commentsList.firstChild);
+    } else {
+      commentsList.appendChild(commentEl);
+    }
+    
+    // Add fade-in animation for new comments
+    commentEl.style.opacity = '0';
+    commentEl.style.transform = 'translateY(-10px)';
+    commentEl.style.transition = 'opacity 300ms ease, transform 300ms ease';
+    
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        commentEl.style.opacity = '1';
+        commentEl.style.transform = 'translateY(0)';
+      });
+    });
+  };
+  
+  /**
+   * Format comment date to display format
+   * Displays "Feb 5" for current year, "Feb 5 2025" for previous years
+   */
+  const formatCommentDate = (dateString) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    
+    // Format month and day
+    const options = { month: 'short', day: 'numeric' };
+    let formattedDate = date.toLocaleDateString('en-US', options);
+    
+    // Add year if not current year
+    if (date.getFullYear() !== now.getFullYear()) {
+      formattedDate += ' ' + date.getFullYear();
+    }
+    
+    return formattedDate;
+  };
+  
   const renderDesktopSpotlightMedia = (state, item) => {
-    const { leftColumn } = state.desktopSpotlight;
+    const { leftColumn, container } = state.desktopSpotlight;
     leftColumn.innerHTML = '';
     
     if (!item || !item.type) {
@@ -3135,13 +3478,26 @@
       return;
     }
     
+    // Back button - append to container (not leftColumn) for proper positioning
     const backBtn = document.createElement('button');
     backBtn.type = 'button';
     backBtn.className = 'abu-pg-desktop-spotlight-back-btn yp-icon-button';
     if (state.iconTemplates.back) {
       backBtn.innerHTML = state.iconTemplates.back;
     }
-    leftColumn.appendChild(backBtn);
+    
+    // Remove any existing back button first (for SPA navigation)
+    const existingBackBtn = container.querySelector('.abu-pg-desktop-spotlight-back-btn');
+    if (existingBackBtn) {
+      existingBackBtn.remove();
+    }
+    
+    // Append to container, not leftColumn
+    container.appendChild(backBtn);
+    
+    // #region agent log - back button created
+    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:3487',message:'Back button created and appended',data:{hasIconContent:!!state.iconTemplates.back,buttonInnerHTML:backBtn.innerHTML.substring(0,50),containerPosition:getComputedStyle(container).position},timestamp:Date.now(),sessionId:'back-button-debug',runId:'v11',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion agent log
     
     backBtn.addEventListener('click', (event) => {
       event.preventDefault();
@@ -3399,7 +3755,7 @@
     
     const commentInput = document.createElement('input');
     commentInput.type = 'text';
-    commentInput.placeholder = isLoggedIn ? 'Add a comment...' : 'Log in to comment';
+    commentInput.placeholder = isLoggedIn ? 'Add a comment' : 'Log in to comment';
     commentInput.readOnly = !isLoggedIn;
     
     if (!isLoggedIn) {
@@ -3412,11 +3768,84 @@
     }
     
     commentBar.appendChild(commentInput);
+    
+    // Send button (circular, embedded in input)
+    if (isLoggedIn) {
+      const sendBtn = document.createElement('button');
+      sendBtn.type = 'button';
+      sendBtn.className = 'abu-pg-comment-send-btn';
+      sendBtn.setAttribute('aria-label', 'Send comment');
+      if (state.iconTemplates.paperPlane) {
+        sendBtn.innerHTML = state.iconTemplates.paperPlane;
+      }
+      commentBar.appendChild(sendBtn);
+      
+      // Shared comment submission function
+      const submitComment = async () => {
+        const commentText = commentInput.value.trim();
+        if (!commentText) return;
+        
+        // Show loading state
+        commentInput.disabled = true;
+        sendBtn.disabled = true;
+        const originalPlaceholder = commentInput.placeholder;
+        commentInput.placeholder = 'Sending...';
+        
+        try {
+          const response = await fetch(window.abuPgConfig.ajaxUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+              action: 'abu_pg_submit_comment',
+              nonce: window.abuPgConfig.nonce,
+              tile_id: item.id,
+              comment: commentText
+            })
+          });
+          
+          const data = await response.json();
+          
+          if (data.success) {
+            // Clear input
+            commentInput.value = '';
+            // Add comment to list
+            addCommentToList(commentsList, data.data.comment);
+          } else {
+            alert(data.data.message || 'Failed to submit comment');
+          }
+        } catch (error) {
+          console.error('Comment submission error:', error);
+          alert('Failed to submit comment');
+        } finally {
+          commentInput.disabled = false;
+          sendBtn.disabled = false;
+          commentInput.placeholder = originalPlaceholder;
+        }
+      };
+      
+      // Click handler for send button
+      sendBtn.addEventListener('click', async (event) => {
+        event.preventDefault();
+        await submitComment();
+      });
+      
+      // Enter key handler for input
+      commentInput.addEventListener('keypress', async (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          await submitComment();
+        }
+      });
+    }
+    
     commentSection.appendChild(commentBar);
     
     mediaContainer.appendChild(commentSection);
     
     leftColumn.appendChild(mediaContainer);
+    
+    // Load existing comments when spotlight opens
+    loadComments(item.id, commentsList);
   };
   
   const renderDesktopSpotlightRightColumn = (state, adjacentItems) => {
@@ -3670,6 +4099,11 @@
     if (!state.desktopSpotlight) {
       return;
     }
+    
+    // #region agent log - check gallery on close
+    const mainGallery = document.querySelector('.abu-pg-chapters-wrapper');
+    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4098',message:'Closing desktop spotlight',data:{mainGalleryExists:!!mainGallery,mainGalleryVisible:mainGallery ? getComputedStyle(mainGallery).display !== 'none' : false,tileCount:mainGallery ? mainGallery.querySelectorAll('.abu-pg-tile').length : 0},timestamp:Date.now(),sessionId:'close-debug',runId:'v11',hypothesisId:'GALLERY_CHECK'})}).catch(()=>{});
+    // #endregion agent log
     
     // Restore kit base URL (unless this is from a popstate event or initial load)
     // CLEAN BREAK: Return to kit URL instead of removing query param
@@ -3973,6 +4407,20 @@
       observer: null,
       imageObserver: null,
     };
+    
+    // Cache templates in GalleryStateManager for reuse across spotlights
+    // #region agent log - cache templates
+    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4398',message:'Caching templates in initGallery',data:{hasTemplates:!!state.templates,hasImage:!!state.templates?.image,hasVideo:!!state.templates?.video,willCache:!!(state.templates && (state.templates.image || state.templates.video)),cacheAlreadyExists:!!(GalleryStateManager.tileTemplates && (GalleryStateManager.tileTemplates.image || GalleryStateManager.tileTemplates.video))},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v10',hypothesisId:'H2_CACHE'})}).catch(()=>{});
+    // #endregion agent log
+    // Only cache if we have valid templates AND the cache is empty (first gallery wins)
+    if (state.templates && (state.templates.image || state.templates.video)) {
+      if (!GalleryStateManager.tileTemplates || (!GalleryStateManager.tileTemplates.image && !GalleryStateManager.tileTemplates.video)) {
+        GalleryStateManager.tileTemplates = state.templates;
+        // #region agent log - cached confirmation
+        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4399',message:'Templates cached successfully',data:{cachedImage:!!GalleryStateManager.tileTemplates.image,cachedVideo:!!GalleryStateManager.tileTemplates.video},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v10',hypothesisId:'H2_CACHE'})}).catch(()=>{});
+        // #endregion agent log
+      }
+    }
 
     if ('IntersectionObserver' in window) {
       // Configure lazy loading with buffer zone (~2 viewport heights)
@@ -4036,6 +4484,16 @@
     const share2Template = document.querySelector('.abu-pg-icon-template[data-icon="share-2"]');
     if (share2Template) {
       state.iconTemplates.share2 = share2Template.innerHTML;
+    }
+    
+    const paperPlaneTemplate = document.querySelector('.abu-pg-icon-template[data-icon="paper-plane"]');
+    if (paperPlaneTemplate) {
+      state.iconTemplates.paperPlane = paperPlaneTemplate.innerHTML;
+    }
+    
+    const dotsHorizontalTemplate = document.querySelector('.abu-pg-icon-template[data-icon="dots-horizontal"]');
+    if (dotsHorizontalTemplate) {
+      state.iconTemplates.dotsHorizontal = dotsHorizontalTemplate.innerHTML;
     }
     
     const speakerLoudTemplate = document.querySelector('.abu-pg-icon-template[data-icon="speaker-loud"]');
@@ -4638,7 +5096,7 @@
         speakerOff: getIconTemplate('speaker-off'),
       },
       userActivated: false,
-      templates: createTemplates(fakeGallery),
+      templates: GalleryStateManager.getTemplates(), // Use cached/smart template getter
       allItems: [item, ...adjacentItems], // All items for adjacent tile lookup
       activeItems: [item, ...adjacentItems],
       visibleCount: adjacentItems.length + 1,
@@ -4783,6 +5241,12 @@
     
     const share2Template = document.querySelector('.abu-pg-icon-template[data-icon="share-2"]');
     if (share2Template) iconTemplates.share2 = share2Template.innerHTML;
+    
+    const paperPlaneTemplate = document.querySelector('.abu-pg-icon-template[data-icon="paper-plane"]');
+    if (paperPlaneTemplate) iconTemplates.paperPlane = paperPlaneTemplate.innerHTML;
+    
+    const dotsHorizontalTemplate = document.querySelector('.abu-pg-icon-template[data-icon="dots-horizontal"]');
+    if (dotsHorizontalTemplate) iconTemplates.dotsHorizontal = dotsHorizontalTemplate.innerHTML;
     
     const speakerLoudTemplate = document.querySelector('.abu-pg-icon-template[data-icon="speaker-loud"]');
     if (speakerLoudTemplate) iconTemplates.speakerLoud = speakerLoudTemplate.innerHTML;
@@ -4979,6 +5443,54 @@
     
     // Current active spotlight state (for popstate handling)
     currentSpotlight: null,
+    
+    // Tile templates (image/video) - created once, reused everywhere
+    tileTemplates: null,
+    
+    /**
+     * Get or create tile templates
+     */
+    getTemplates() {
+      // #region agent log - getTemplates entry
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5421',message:'getTemplates called',data:{hasCachedTemplates:!!this.tileTemplates,cachedImageExists:this.tileTemplates?.image ? true : false,cachedVideoExists:this.tileTemplates?.video ? true : false},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion agent log
+      
+      if (this.tileTemplates) {
+        return this.tileTemplates;
+      }
+      
+      // Try multiple sources for templates, in order of preference:
+      
+      // 1. Try main gallery (best source - has all buttons for logged-in users)
+      const mainGallery = document.querySelector('.abu-pg-chapters-wrapper');
+      // #region agent log - main gallery check
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5429',message:'Main gallery check',data:{exists:!!mainGallery,tileCount:mainGallery ? mainGallery.querySelectorAll('.abu-pg-tile').length : 0,isVisible:mainGallery ? getComputedStyle(mainGallery).display !== 'none' : false,hasButtonsInFirstTile:mainGallery && mainGallery.querySelector('.abu-pg-tile') ? !!mainGallery.querySelector('.abu-pg-tile').querySelector('.abu-pg-tile-button-container') : false},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H3'})}).catch(()=>{});
+      // #endregion agent log
+      if (mainGallery && mainGallery.querySelectorAll('.abu-pg-tile').length > 0) {
+        this.tileTemplates = createTemplates(mainGallery);
+        return this.tileTemplates;
+      }
+      
+      // 2. Try spotlight right column (if we're in a deep-link scenario)
+      const spotlightRightGrid = document.querySelector('.abu-pg-desktop-spotlight-right-grid');
+      if (spotlightRightGrid && spotlightRightGrid.querySelectorAll('.abu-pg-tile').length > 0) {
+        this.tileTemplates = createTemplates(spotlightRightGrid);
+        return this.tileTemplates;
+      }
+      
+      // 3. Try any tiles in the document as fallback
+      const anyTilesContainer = document.querySelector('.abu-pg-tile')?.parentElement;
+      if (anyTilesContainer && anyTilesContainer.querySelectorAll('.abu-pg-tile').length > 0) {
+        this.tileTemplates = createTemplates(anyTilesContainer);
+        return this.tileTemplates;
+      }
+      
+      // 4. Fallback: return empty templates
+      // #region agent log - template fallback
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5450',message:'No valid templates found - returning empty',data:{},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H2'})}).catch(()=>{});
+      // #endregion agent log
+      return { image: null, video: null };
+    },
     
     /**
      * Check if a kit is already cached
@@ -5265,7 +5777,51 @@
     // Get or create state object
     let state = GalleryStateManager.currentSpotlight;
     
+    // #region agent log - state check
+    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        location: 'gallery.js:5698',
+        message: 'renderSpotlightForTile state check',
+        data: {
+          hasState: !!state,
+          hasDesktopSpotlight: state?.desktopSpotlight ? true : false,
+          hasTemplates: state?.templates ? true : false,
+          templateImageExists: state?.templates?.image ? true : false,
+          templateVideoExists: state?.templates?.video ? true : false
+        },
+        timestamp: Date.now(),
+        sessionId: 'state-debug',
+        runId: 'v5',
+        hypothesisId: 'STATE_REUSE'
+      })
+    }).catch(() => {});
+    // #endregion agent log
+    
     if (!state || !state.desktopSpotlight) {
+      // Get tile templates from GalleryStateManager (cached or created once)
+      const tileTemplates = GalleryStateManager.getTemplates();
+      
+      // #region agent log - template creation
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:5702',
+          message: 'Got templates from GalleryStateManager',
+          data: {
+            hasImageTemplate: !!tileTemplates.image,
+            hasVideoTemplate: !!tileTemplates.video
+          },
+          timestamp: Date.now(),
+          sessionId: 'state-debug',
+          runId: 'v6',
+          hypothesisId: 'TEMPLATE_CREATION'
+        })
+      }).catch(() => {});
+      // #endregion agent log
+      
       // Create new spotlight state
       state = {
         container: document.body,
@@ -5292,15 +5848,7 @@
           srcOriginal: t.srcOriginal || t.url,
         })),
         activeItems: [],
-        templates: {
-          caretLeft: '',
-          heart: '',
-          heartFilled: '',
-          chatBubble: '',
-          share2: '',
-          speakerLoud: '',
-          speakerOff: '',
-        },
+        templates: tileTemplates,
         iconTemplates: {
           back: '',
           heart: '',
@@ -5319,19 +5867,13 @@
         return template ? template.innerHTML : '';
       };
       
-      state.templates.caretLeft = getIconTemplate('caret-left');
-      state.templates.heart = getIconTemplate('heart');
-      state.templates.heartFilled = getIconTemplate('heart-filled');
-      state.templates.chatBubble = getIconTemplate('chat-bubble');
-      state.templates.share2 = getIconTemplate('share-2');
-      state.templates.speakerLoud = getIconTemplate('speaker-loud');
-      state.templates.speakerOff = getIconTemplate('speaker-off');
-      
       state.iconTemplates.back = getIconTemplate('caret-left');
       state.iconTemplates.heart = getIconTemplate('heart');
       state.iconTemplates.heartFilled = getIconTemplate('heart-filled');
       state.iconTemplates.chatBubble = getIconTemplate('chat-bubble');
       state.iconTemplates.share2 = getIconTemplate('share-2');
+      state.iconTemplates.paperPlane = getIconTemplate('paper-plane');
+      state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
       state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
       state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
       
@@ -5347,8 +5889,98 @@
       }
     }
     
+    // Ensure state has valid templates (for both new state and reused state)
+    if (!state.templates || !state.templates.image || !state.templates.video) {
+      state.templates = GalleryStateManager.getTemplates();
+      
+      // #region agent log - template refresh
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:5848',
+          message: 'Refreshed templates on state',
+          data: {
+            hasImageTemplate: !!state.templates.image,
+            hasVideoTemplate: !!state.templates.video
+          },
+          timestamp: Date.now(),
+          sessionId: 'state-debug',
+          runId: 'v8',
+          hypothesisId: 'TEMPLATE_REFRESH'
+        })
+      }).catch(() => {});
+      // #endregion agent log
+    }
+    
+    // Ensure state has valid icon templates (for both new state and reused state)
+    if (!state.iconTemplates || !state.iconTemplates.back || !state.iconTemplates.paperPlane) {
+      const getIconTemplate = (iconName) => {
+        const template = document.querySelector(`.abu-pg-icon-template[data-icon="${iconName}"]`);
+        return template ? template.innerHTML : '';
+      };
+      
+      state.iconTemplates = state.iconTemplates || {};
+      state.iconTemplates.back = getIconTemplate('caret-left');
+      state.iconTemplates.heart = getIconTemplate('heart');
+      state.iconTemplates.heartFilled = getIconTemplate('heart-filled');
+      state.iconTemplates.chatBubble = getIconTemplate('chat-bubble');
+      state.iconTemplates.share2 = getIconTemplate('share-2');
+      state.iconTemplates.paperPlane = getIconTemplate('paper-plane');
+      state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
+      state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
+      state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
+      
+      // #region agent log - icon template refresh
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5905',message:'Icon templates refreshed on state reuse',data:{back:!!state.iconTemplates.back,paperPlane:!!state.iconTemplates.paperPlane,paperPlaneLength:state.iconTemplates.paperPlane?.length || 0},timestamp:Date.now(),sessionId:'icon-debug',runId:'v9',hypothesisId:'H4'})}).catch(()=>{});
+      // #endregion agent log
+      
+      // #region agent log - icon refresh
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:5880',
+          message: 'Refreshed icon templates on state',
+          data: {
+            backIconExists: !!state.iconTemplates.back,
+            paperPlaneIconExists: !!state.iconTemplates.paperPlane
+          },
+          timestamp: Date.now(),
+          sessionId: 'state-debug',
+          runId: 'v8',
+          hypothesisId: 'ICON_REFRESH'
+        })
+      }).catch(() => {});
+      // #endregion agent log
+    }
+    
     // Render spotlight content
     if (!useMobileLayout) {
+      // #region agent log - check icon templates before render
+      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          location: 'gallery.js:5850',
+          message: 'About to render spotlight media',
+          data: {
+            hasState: !!state,
+            hasIconTemplates: !!state.iconTemplates,
+            backIconExists: state.iconTemplates?.back ? true : false,
+            paperPlaneIconExists: state.iconTemplates?.paperPlane ? true : false,
+            hasTemplates: !!state.templates,
+            imageTemplateExists: state.templates?.image ? true : false,
+            videoTemplateExists: state.templates?.video ? true : false
+          },
+          timestamp: Date.now(),
+          sessionId: 'state-debug',
+          runId: 'v7',
+          hypothesisId: 'ICON_CHECK'
+        })
+      }).catch(() => {});
+      // #endregion agent log
+      
       renderDesktopSpotlightMedia(state, item);
       
       // PHASE 6: Render windowed right column (±20 tiles around current)
@@ -5649,6 +6281,8 @@
     state.iconTemplates.heartFilled = getIconTemplate('heart-filled');
     state.iconTemplates.chatBubble = getIconTemplate('chat-bubble');
     state.iconTemplates.share2 = getIconTemplate('share-2');
+    state.iconTemplates.paperPlane = getIconTemplate('paper-plane');
+    state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
     state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
     state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
     

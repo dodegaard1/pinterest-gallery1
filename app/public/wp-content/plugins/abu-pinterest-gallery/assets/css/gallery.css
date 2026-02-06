@@ -507,31 +507,30 @@ body.abu-pg-scroll-lock {
 
 .abu-pg-desktop-spotlight-container {
 	position: relative;
-	width: 80%;
+	width: 90%;
 	height: 100vh;
+	max-height: 1200px;
 	margin: 0 auto;
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	grid-template-rows: 1fr;
 	gap: 16px;
-	padding: 100px 0;
+	padding: 50px 0;
 	box-sizing: border-box;
 }
 
 .abu-pg-desktop-spotlight-left {
 	position: relative;
-	display: flex;
-	flex-direction: column;
-	align-items: flex-start;
-	justify-content: flex-start;
-	min-height: 0;
+	overflow-y: auto;
+	overflow-x: visible;
+	height: 100%;
 }
 
 .abu-pg-desktop-spotlight-back-btn {
 	position: absolute;
-	top: 0;
+	top: 50px;
 	left: -56px;
-	z-index: 5;
+	z-index: 10;
 	background: #fff;
 	color: #111;
 	border: 1px solid #d0d0d0;
@@ -556,15 +555,12 @@ body.abu-pg-scroll-lock {
 .abu-pg-desktop-spotlight-media-container {
 	position: relative;
 	width: 100%;
-	height: 100%;
+	min-height: 100%;
 	background: #ffffff;
 	border: 1px solid #d0d0d0;
 	border-radius: 14px;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	overflow: hidden;
-	padding: 32px;
+	overflow: visible;
+	padding: 50;
 	box-sizing: border-box;
 }
 
@@ -574,13 +570,17 @@ body.abu-pg-scroll-lock {
 	align-items: center;
 	justify-content: center;
 	width: 100%;
-	height: 100%;
+	height: 750px;
+	max-height: 70vh;
+	padding: 50px;
+	padding-bottom: 20px;
+	box-sizing: border-box;
 }
 
 .abu-pg-desktop-spotlight-media-wrapper img,
 .abu-pg-desktop-spotlight-media-wrapper video {
-	max-width: 80%;
-	max-height: 80%;
+	max-width: 90%;
+	max-height: 90%;
 	width: auto;
 	height: auto;
 	display: block;
@@ -670,10 +670,12 @@ body.abu-pg-scroll-lock {
 	padding-right: 8px;
 	-webkit-overflow-scrolling: touch;
 	scrollbar-width: none;
-	min-height: 0;
+	height: 100%;
 	border-radius: 14px;
 	box-sizing: border-box;
 	width: 100%;
+	display: flex;
+	flex-direction: column;
 }
 
 .abu-pg-desktop-spotlight-right::-webkit-scrollbar {
@@ -753,9 +755,15 @@ body.abu-pg-scroll-lock {
 }
 
 .abu-pg-desktop-spotlight-poster {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
 	opacity: 1;
 	transition: opacity 180ms ease;
 	border-radius: 14px;
+	pointer-events: none;
 }
 
 /* Hide play button and overlay on main grid for desktop */
@@ -1258,3 +1266,267 @@ body.abu-pg-scroll-lock {
 		font-size: 16px;
 	}
 }
+
+/* ========================================
+ * SPOTLIGHT COMMENTS (Desktop) - New Card Design
+ * ======================================== */
+.abu-pg-desktop-spotlight-comments {
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	width: 100%;
+	padding: 12px 13px 12px 13px;
+	padding-top: 20px;
+	margin-top: 0;
+	background: #ffffff;
+	border: none;
+	border-top: none;
+	border-radius: 0 0 14px 14px;
+	box-sizing: border-box;
+	z-index: 5;
+}
+
+/* Comments list container */
+.abu-pg-spotlight-comments-list {
+	position: relative;
+	margin-bottom: 11px;
+	padding-top: 30px;
+	max-height: 100px;
+	overflow-y: auto;
+	overflow-x: hidden;
+	padding-right: 5px;
+	-webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 30px);
+	mask-image: linear-gradient(to bottom, transparent 0%, black 30px);
+}
+
+/* Custom scrollbar for comments list */
+.abu-pg-spotlight-comments-list::-webkit-scrollbar {
+	width: 4px;
+}
+
+.abu-pg-spotlight-comments-list::-webkit-scrollbar-track {
+	background: transparent;
+	margin-top: 30px;
+}
+
+.abu-pg-spotlight-comments-list::-webkit-scrollbar-thumb {
+	background: #cdcdcd;
+	border-radius: 2px;
+}
+
+.abu-pg-spotlight-comments-list::-webkit-scrollbar-thumb:hover {
+	background: #999;
+}
+
+/* Individual comment row */
+.abu-pg-comment {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin-bottom: 11px;
+}
+
+/* Left cluster: avatar + text block */
+.abu-pg-comment-left {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	flex: 1;
+	min-width: 0;
+}
+
+/* Avatar */
+.abu-pg-comment-avatar {
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	flex-shrink: 0;
+	background: #e0e0e0;
+	overflow: hidden;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-weight: 600;
+	font-size: 11px;
+	color: #666;
+}
+
+.abu-pg-comment-avatar img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+/* Text block (name + comment on same line, then timestamp + ellipsis) */
+.abu-pg-comment-text-block {
+	flex: 1;
+	min-width: 0;
+}
+
+/* Line 1: Name + Comment (same baseline) */
+.abu-pg-comment-name-line {
+	display: flex;
+	align-items: baseline;
+	gap: 7px;
+	flex-wrap: wrap;
+	margin-bottom: 4px;
+}
+
+.abu-pg-comment-author {
+	font-weight: 700;
+	font-size: 13px;
+	color: #1a1a1a;
+	line-height: 1.3;
+}
+
+.abu-pg-comment-content {
+	font-weight: 400;
+	font-size: 12px;
+	color: #4a4a4a;
+	line-height: 1.3;
+	word-break: break-word;
+}
+
+/* Line 2: Timestamp + Ellipsis */
+.abu-pg-comment-meta-line {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.abu-pg-comment-date {
+	font-size: 9px;
+	color: #767676;
+	line-height: 1;
+}
+
+.abu-pg-comment-actions {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: #767676;
+	cursor: pointer;
+	user-select: none;
+	padding: 4px;
+	margin: 0;
+	border-radius: 4px;
+	transition: background-color 120ms ease;
+	width: 18px;
+	height: 18px;
+	line-height: 0;
+	vertical-align: middle;
+	box-sizing: border-box;
+	border: none;
+	background: transparent;
+}
+
+.abu-pg-comment-actions svg {
+	width: 15px;
+	height: 15px;
+	display: block;
+	flex-shrink: 0;
+}
+
+.abu-pg-comment-actions:hover {
+	background-color: #f5f5f5;
+}
+
+.abu-pg-comment-actions.is-delete-mode {
+	width: auto;
+	padding: 4px 8px;
+}
+
+.abu-pg-comment-actions-delete {
+	font-size: 9px;
+	color: #dc3545;
+	font-weight: 600;
+	line-height: 1;
+	white-space: nowrap;
+}
+
+/* Comment input bar (pill-shaped) */
+.abu-pg-spotlight-comment-bar {
+	position: relative;
+	width: 100%;
+	height: 40px;
+	background: #f7f7f7;
+	border: 1px solid #d0d0d0;
+	border-radius: 20px;
+	display: flex;
+	align-items: center;
+	padding-left: 13px;
+	padding-right: 80px;
+	box-sizing: border-box;
+	transition: border-color 150ms ease;
+}
+
+.abu-pg-spotlight-comment-bar:focus-within {
+	border-color: #999;
+}
+
+.abu-pg-spotlight-comment-bar.logged-out {
+	cursor: pointer;
+	background: #f5f5f5;
+}
+
+.abu-pg-spotlight-comment-bar input[type="text"] {
+	flex: 1;
+	border: none;
+	background: transparent;
+	font-size: 12px;
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+	outline: none;
+	color: #1a1a1a;
+}
+
+.abu-pg-spotlight-comment-bar input[type="text"]::placeholder {
+	color: #999;
+}
+
+.abu-pg-spotlight-comment-bar.logged-out input[type="text"] {
+	cursor: pointer;
+}
+
+/* Send button (pill-shaped, embedded in input field) */
+.abu-pg-comment-send-btn {
+	position: absolute;
+	right: 8px;
+	top: 50%;
+	transform: translateY(-50%);
+	height: 32px;
+	padding: 0 16px;
+	border-radius: 16px;
+	background: #ce8466;
+	border: none;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	color: #fff;
+	font-size: 11px;
+	font-weight: 600;
+	transition: transform 160ms ease, box-shadow 160ms ease;
+	box-shadow: 0 1px 4px rgba(206, 132, 102, 0.3);
+}
+
+.abu-pg-comment-send-btn:hover {
+	transform: translateY(-50%) translateY(-1px);
+	box-shadow: 0 2px 6px rgba(206, 132, 102, 0.4);
+}
+
+.abu-pg-comment-send-btn:active {
+	transform: translateY(-50%) scale(0.96);
+}
+
+.abu-pg-comment-send-btn .yp-icon {
+	width: 13px;
+	height: 13px;
+}
+
+.abu-pg-comment-send-btn:disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
