@@ -1728,6 +1728,8 @@ function abu_pg_get_tile_metadata( $tile_post_id ) {
 		'created'  => $created_at,
 		'filename' => $filename,
 		'title'    => $title,
+		'userHasLiked' => is_user_logged_in() && abu_pg_user_has_liked_tile( 0, $tile_post_id ),
+		'likeCount'    => abu_pg_get_tile_like_count( $tile_post_id ),
 	);
 	
 	if ( $is_tile_cpt ) {
@@ -1916,6 +1918,12 @@ function abu_pg_render_full_gallery( $post_id, $chapters, $debug_enabled ) {
 		</div>
 		<div class="abu-pg-icon-template" data-icon="speaker-off" hidden>
 			<?php echo your_plugin_icon( 'speaker-off', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="maximize" hidden>
+			<?php echo your_plugin_icon( 'maximize', 'yp-icon' ); ?>
+		</div>
+		<div class="abu-pg-icon-template" data-icon="cross-2" hidden>
+			<?php echo your_plugin_icon( 'cross-2', 'yp-icon' ); ?>
 		</div>
 		
 		<!-- Sticky Chapter Navigation -->
@@ -2144,14 +2152,26 @@ function abu_pg_ajax_submit_comment() {
 	// Get comment data for response
 	$comment = get_comment( $comment_id );
 	
+	// Use first + last name if available, fall back to comment_author
+	$comment_user_id = absint( $comment->user_id );
+	$display_author  = $comment->comment_author;
+	if ( $comment_user_id ) {
+		$first = get_user_meta( $comment_user_id, 'first_name', true );
+		$last  = get_user_meta( $comment_user_id, 'last_name', true );
+		if ( $first || $last ) {
+			$display_author = trim( $first . ' ' . $last );
+		}
+	}
+
 	wp_send_json_success(
 		array(
 			'comment' => array(
-				'id'      => $comment_id,
-				'author'  => $comment->comment_author,
-				'content' => $comment->comment_content,
-				'date'    => get_comment_date( 'c', $comment_id ), // ISO 8601 format with timezone
-				'userId'  => absint( $comment->user_id ), // User ID of comment author
+				'id'        => $comment_id,
+				'author'    => $display_author,
+				'content'   => $comment->comment_content,
+				'date'      => get_comment_date( 'c', $comment_id ),
+				'userId'    => $comment_user_id,
+				'avatarUrl' => $comment_user_id ? get_avatar_url( $comment_user_id, array( 'size' => 80 ) ) : '',
 			),
 		)
 	);
@@ -2231,12 +2251,24 @@ function abu_pg_ajax_load_tile_comments() {
 	// Format comments for JSON response
 	$formatted_comments = array();
 	foreach ( $comments as $comment ) {
+		// Use first + last name if available, fall back to comment_author
+		$comment_user_id = absint( $comment->user_id );
+		$display_author  = $comment->comment_author;
+		if ( $comment_user_id ) {
+			$first = get_user_meta( $comment_user_id, 'first_name', true );
+			$last  = get_user_meta( $comment_user_id, 'last_name', true );
+			if ( $first || $last ) {
+				$display_author = trim( $first . ' ' . $last );
+			}
+		}
+
 		$formatted_comments[] = array(
-			'id'      => $comment->comment_ID,
-			'author'  => $comment->comment_author,
-			'content' => $comment->comment_content,
-			'date'    => get_comment_date( 'c', $comment->comment_ID ), // ISO 8601 format with timezone
-			'userId'  => absint( $comment->user_id ), // User ID of comment author (0 if not logged in)
+			'id'        => $comment->comment_ID,
+			'author'    => $display_author,
+			'content'   => $comment->comment_content,
+			'date'      => get_comment_date( 'c', $comment->comment_ID ),
+			'userId'    => $comment_user_id,
+			'avatarUrl' => $comment_user_id ? get_avatar_url( $comment_user_id, array( 'size' => 80 ) ) : '',
 		);
 	}
 	

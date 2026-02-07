@@ -1,6 +1,4 @@
 (function () {
-  // CLEAN BREAK: Removed telemetry/agent logging code
-  
   const ready = (fn) => {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', fn);
@@ -68,26 +66,6 @@
     return hasShareAPI && isMobile;
   };
 
-  // #region agent log
-  // Helper for mobile debugging - uses WordPress AJAX endpoint for tunnel compatibility
-  function logMobile(payload) {
-    if (!payload) return;
-    payload.sessionId = 'mobile-debug-session';
-    payload.timestamp = Date.now();
-    
-    // Use WordPress AJAX endpoint (works via tunnel)
-    const ajaxUrl = (typeof window.abuPgConfig !== 'undefined' && window.abuPgConfig.ajaxUrl) ? window.abuPgConfig.ajaxUrl : '/wp-admin/admin-ajax.php';
-    fetch(`${ajaxUrl}?action=abu_pg_debug_log`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload),
-      credentials: 'same-origin'
-    }).catch(() => {});
-  }
-  
-  // Stub for logDeepLinkTiming (was removed but still referenced in code)
-  const logDeepLinkTiming = () => {};
-  // #endregion agent log
 
   /**
    * Auth state refresh helper
@@ -162,11 +140,7 @@
         saveBtn.style.display = isLoggedIn ? '' : 'none';
       }
 
-      // Update share button visibility (desktop Web Share API button)
-      const shareBtn = spotlight.querySelector('.abu-pg-share-btn');
-      if (shareBtn) {
-        shareBtn.style.display = isLoggedIn ? '' : 'none';
-      }
+      // Share button (URL copy) is always visible — no auth required
 
       // Update like button state
       const likeBtn = spotlight.querySelector('.abu-pg-like');
@@ -383,12 +357,6 @@
     if (!img) {
       return Promise.resolve();
     }
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'A',location:'gallery.js:62',message:'waitForImageReady start',data:{label,complete:img.complete?'yes':'no',naturalWidth:img.naturalWidth||0,src:img.currentSrc||img.getAttribute('src')||''},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
-    // #region agent log
-    logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'A',location:'gallery.js:62',message:'waitForImageReady start (https)',data:{label,complete:img.complete?'yes':'no',naturalWidth:img.naturalWidth||0,src:img.currentSrc||img.getAttribute('src')||''},timestamp:Date.now()});
-    // #endregion agent log
     const decodeIfPossible = () => {
       if (typeof img.decode === 'function') {
         return img.decode().catch(() => {});
@@ -397,23 +365,11 @@
     };
     if (img.complete && img.naturalWidth) {
       return decodeIfPossible().finally(() => {
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'A',location:'gallery.js:72',message:'waitForImageReady resolved (complete)',data:{label,naturalWidth:img.naturalWidth||0},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
-        // #region agent log
-        logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'A',location:'gallery.js:72',message:'waitForImageReady resolved (complete, https)',data:{label,naturalWidth:img.naturalWidth||0},timestamp:Date.now()});
-        // #endregion agent log
       });
     }
     return new Promise((resolve) => {
       const finalize = () => {
         decodeIfPossible().finally(() => {
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'A',location:'gallery.js:77',message:'waitForImageReady resolved (event)',data:{label,naturalWidth:img.naturalWidth||0,eventComplete:img.complete?'yes':'no'},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion agent log
-          // #region agent log
-          logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'A',location:'gallery.js:77',message:'waitForImageReady resolved (event, https)',data:{label,naturalWidth:img.naturalWidth||0,eventComplete:img.complete?'yes':'no'},timestamp:Date.now()});
-          // #endregion agent log
           resolve();
         });
       };
@@ -431,9 +387,6 @@
       const hasNatural = img && img.naturalWidth > 0;
       const hasComplete = img && img.complete;
       const ready = hasBox && hasNatural && hasComplete;
-      // #region agent log
-      logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'L',location:'gallery.js:85',message:'waitForImagePaint frame',data:{label,frame:frames,width:rect.width||0,height:rect.height||0,hasBox:hasBox?'yes':'no',naturalWidth:img?img.naturalWidth||0:0,complete:hasComplete?'yes':'no'},timestamp:Date.now()});
-      // #endregion agent log
       if (ready || frames >= maxFrames) {
         resolve();
         return;
@@ -492,6 +445,12 @@
       return false;
     }
   };
+
+  // Flag: true only for the very first spotlight render from a tile permalink page.
+  // Set by openSpotlightForTilePermalink(), consumed (cleared) by the render path.
+  // Used to show a "click/tap to play" prompt on video tiles where browser
+  // autoplay policy blocks playback (no prior user interaction on the page).
+  let isInitialPermalinkVisit = false;
 
   /**
    * ========================================
@@ -999,6 +958,16 @@
    * Show desktop download popover with Web and Print options
    */
   const showDesktopDownloadPopover = (button, item) => {
+    // Video tiles: skip popover, download original directly
+    // (Web/Print distinction only applies to images with multiple size variants)
+    if (item.type === 'video') {
+      const videoUrl = item.originalUrl || item.srcOriginal || item.url;
+      if (videoUrl) {
+        downloadFile(videoUrl);
+      }
+      return;
+    }
+    
     // Remove any existing popover
     const existingPopover = document.querySelector('.abu-pg-download-popover');
     if (existingPopover) {
@@ -1194,21 +1163,6 @@
       video.load();
     }
     video.dataset.srcLoaded = 'true';
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: 'debug-session',
-        runId: 'pre-fix',
-        hypothesisId: 'C',
-        location: 'gallery.js:182',
-        message: 'ensureVideoSource applied',
-        data: { chosen, hasSourceTag: source ? 'yes' : 'no' },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion agent log
 
     const tile = video.closest('.abu-pg-tile');
     if (tile) {
@@ -1334,9 +1288,6 @@
 
   const lockScroll = (state) => {
     if (state.scrollLocked) {
-      // #region agent log H4
-      logMobile({hypothesisId:'H4',location:'lockScroll:already-locked',message:'Scroll already locked',data:{}});
-      // #endregion agent log H4
       return;
     }
     state.scrollLocked = true;
@@ -1348,9 +1299,6 @@
       document.body.style.top = `-${state.scrollY}px`;
       document.body.style.width = '100%';
     }
-    // #region agent log H4
-    logMobile({hypothesisId:'H4',location:'lockScroll:complete',message:'Scroll locked',data:{scrollY:state.scrollY,isIOSWebKit:!!state.isIOSWebKit,bodyPosition:document.body.style.position,bodyOverflow:document.body.style.overflow,documentOverflow:document.documentElement.style.overflow}});
-    // #endregion agent log H4
   };
 
   const unlockScroll = (state) => {
@@ -1369,9 +1317,6 @@
   };
 
   const createSpotlight = (state) => {
-    // #region agent log H1-H2
-    logMobile({hypothesisId:'H1-H2',location:'createSpotlight:entry',message:'Creating mobile spotlight overlay',data:{viewportW:window.innerWidth,viewportH:window.innerHeight,isMobile:isMobileDevice()}});
-    // #endregion agent log H1-H2
     
     const overlay = document.createElement('div');
     overlay.className = 'abu-pg-spotlight';
@@ -1385,10 +1330,6 @@
     
     document.body.appendChild(overlay);
     
-    // #region agent log H1
-    const computedStyle = window.getComputedStyle(overlay);
-    logMobile({hypothesisId:'H1',location:'createSpotlight:after-append',message:'Spotlight DOM appended to body',data:{overlayInDOM:document.body.contains(overlay),overlayClassName:overlay.className,overlayZIndex:computedStyle.zIndex,overlayPosition:computedStyle.position,overlayDisplay:computedStyle.display,overlayVisibility:computedStyle.visibility,overlayOpacity:computedStyle.opacity,overlayTop:computedStyle.top,overlayLeft:computedStyle.left,overlayWidth:computedStyle.width,overlayHeight:computedStyle.height}});
-    // #endregion agent log H1
     
     state.spotlight = {
       overlay,
@@ -1413,7 +1354,6 @@
   };
 
   const bindSpotlightGestures = (state) => {
-    logDeepLinkTiming('spotlight_gestures_binding_start', { isDeepLink: !!state.isDeepLinkMode });
     const { overlay, carouselContainer } = state.spotlight;
     let isPrimaryTouch = false;
     
@@ -1533,7 +1473,6 @@
     overlay.addEventListener('touchmove', handleTouchMove, { passive: false });
     overlay.addEventListener('touchend', handleTouchEnd, { passive: true });
     overlay.addEventListener('touchcancel', handleTouchEnd, { passive: true });
-    logDeepLinkTiming('spotlight_gestures_attached', { isDeepLink: !!state.isDeepLinkMode });
   };
   
   const resetSpotlightPosition = (state) => {
@@ -1708,9 +1647,6 @@
   // This ensures ONE single code path for mobile spotlight rendering.
   
   const preloadSpotlightTile = (state, item, slide, shouldAutoplay = false) => {
-    // #region agent log H8
-    logMobile({hypothesisId:'H8',location:'preloadSpotlightTile:entry',message:'Preloading tile',data:{itemId:item.id,itemType:item.type,hasTemplates:!!state.templates,slideIndex:slide.dataset.index,itemPreviewSrc:item.previewSrc||'none',itemWebUrl:item.webUrl||'none'}});
-    // #endregion agent log H8
     
     const content = createTileElement(item, state.templates, state, 'spotlight');
     content.style.width = '100%';
@@ -1725,58 +1661,47 @@
     const index = parseInt(slide.dataset.index, 10);
     state.spotlight.loadedIndices.add(index);
     
-    // #region agent log H8
-    requestAnimationFrame(() => {
-      const contentStyles = window.getComputedStyle(content);
-      const img = content.querySelector('img');
-      const poster = content.querySelector('.abu-pg-spotlight-poster');
-      const imgStyles = img ? window.getComputedStyle(img) : null;
-      const imgRect = img ? img.getBoundingClientRect() : null;
-      logMobile({hypothesisId:'H8',location:'preloadSpotlightTile:after-append',message:'Content appended',data:{contentClass:content.className,contentWidth:content.clientWidth,contentHeight:content.clientHeight,contentTop:contentStyles.top,contentLeft:contentStyles.left,contentPosition:contentStyles.position,contentOpacity:contentStyles.opacity,contentVisibility:contentStyles.visibility,contentDisplay:contentStyles.display,hasImg:!!img,hasPoster:!!poster,posterSrc:poster?poster.src||'':'',imgSrc:img?img.src||'':'',imgWidth:img?img.clientWidth:0,imgHeight:img?img.clientHeight:0,imgOpacity:imgStyles?imgStyles.opacity:'',imgDisplay:imgStyles?imgStyles.display:'',imgRectTop:imgRect?Math.round(imgRect.top):0,imgRectLeft:imgRect?Math.round(imgRect.left):0,imgRectWidth:imgRect?Math.round(imgRect.width):0,imgRectHeight:imgRect?Math.round(imgRect.height):0}});
-    });
-    // #endregion agent log H8
     
     return content;
   };
   
   const closeSpotlight = (state, skipAnimation = false) => {
-    // #region agent log
-    // H5: Log spotlight close attempt
-    if (window.ABU_DEBUG === true) {
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'fix-test',hypothesisId:'H5',location:'gallery.js:1606',message:'closeSpotlight called',data:{hasSpotlight:!!state.spotlight,hasOverlay:!!(state.spotlight&&state.spotlight.overlay),skipAnimation:skipAnimation},timestamp:Date.now()})}).catch(()=>{});
-    }
-    // #endregion
     
     if (!state.spotlight) {
-      // #region agent log
-      // H5: Log if spotlight doesn't exist
-      if (window.ABU_DEBUG === true) {
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'fix-test',hypothesisId:'H5',location:'gallery.js:1619',message:'closeSpotlight early return - no spotlight',data:{},timestamp:Date.now()})}).catch(()=>{});
-      }
-      // #endregion
       return;
     }
     
-    // FIXED: Mobile permalink close/back should navigate to kit URL if present
-    // Check if we have kit context (from direct URL visit) and should navigate to gallery
-    const isDirectURLMode = state.kitContext && state.kitContext.kitUrl;
+    // Check if a gallery page exists behind the spotlight.
+    // Same approach as desktop: '.abu-pg-chapters-wrapper' only exists on gallery pages.
+    // On tile permalink pages (single-tile.php), there is no gallery to reveal.
+    const hasGalleryBehind = !!document.querySelector('.abu-pg-chapters-wrapper');
     
-    if (isDirectURLMode) {
-      // Direct URL visit: navigate back to the kit gallery page
+    if (!hasGalleryBehind && state.kitContext && state.kitContext.kitUrl) {
+      // No gallery behind (direct URL entry): navigate to the kit gallery page
       window.location.href = state.kitContext.kitUrl;
       return;
     }
     
-    // Normal masonry mode: restore kit base URL with URLStateManager
-    // (This path is for when spotlight was opened from masonry tap)
+    // Gallery exists behind the spotlight: restore URL and remove overlay
     if (typeof URLStateManager !== 'undefined' && 
         !URLStateManager.isPopStateUpdate() && 
         !URLStateManager.isInitialLoad()) {
       URLStateManager.clearOpenTile();
     }
     
+    // Clean up GalleryStateManager reference
+    GalleryStateManager.currentSpotlight = null;
+    
     const { overlay, carouselContainer } = state.spotlight;
     const currentSlide = carouselContainer ? carouselContainer.querySelector('.abu-pg-spotlight-slide.is-active') : null;
+    
+    // Pause all videos in the spotlight to free resources
+    if (carouselContainer) {
+      carouselContainer.querySelectorAll('video').forEach(v => {
+        v.pause();
+        v.src = '';
+      });
+    }
     
     if (skipAnimation || !currentSlide) {
       if (overlay) {
@@ -1794,7 +1719,6 @@
       window.scrollTo(0, state.scrollY || 0);
     } else {
       // Non-iOS: Update the fixed position top value to match new scroll position
-      // This makes the page appear at the new position before unlock
       document.body.style.top = `-${state.scrollY || 0}px`;
     }
     
@@ -1985,40 +1909,19 @@
       });
     }
     
-    // #region agent log H3
-    logMobile({hypothesisId:'H3',location:'openSpotlight:entry',message:'openSpotlight called',data:{isSpotlightEnabled:state.isSpotlightEnabled,hasSpotlight:!!state.spotlight,itemId:item.id,itemType:item.type,hasTile:!!tile,skipAnimation,isMobile:isMobileDevice(),viewportW:window.innerWidth,viewportH:window.innerHeight}});
-    // #endregion agent log H3
     
     if (!state.isSpotlightEnabled) {
-      // #region agent log H3
-      logMobile({hypothesisId:'H3',location:'openSpotlight:disabled',message:'Spotlight disabled, returning early',data:{}});
-      // #endregion agent log H3
       return;
     }
     if (!state.spotlight) {
       createSpotlight(state);
     }
     
-    // #region agent log H3
-    logMobile({hypothesisId:'H3',location:'openSpotlight:after-create',message:'After createSpotlight',data:{hasSpotlight:!!state.spotlight,hasOverlay:!!(state.spotlight&&state.spotlight.overlay),hasCarousel:!!(state.spotlight&&state.spotlight.carouselContainer)}});
-    // #endregion agent log H3
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'E',location:'gallery.js:454',message:'openSpotlight called',data:{type:item.type||'',id:item.id||'',url:item.url||''},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
-    // #region agent log
-    logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'E',location:'gallery.js:454',message:'openSpotlight called (https)',data:{type:item.type||'',id:item.id||'',url:item.url||''},timestamp:Date.now()});
-    // #endregion agent log
     const { overlay, carouselContainer } = state.spotlight;
     if (state.spotlight.clone) {
-      // #region agent log H3
-      logMobile({hypothesisId:'H3',location:'openSpotlight:clone-exists',message:'Clone already exists - EARLY RETURN',data:{}});
-      // #endregion agent log H3
       return;
     }
     
-    // #region agent log H3
-    logMobile({hypothesisId:'H3',location:'openSpotlight:before-url-update',message:'No clone, continuing...',data:{hasURLStateManager:typeof URLStateManager !== 'undefined'}});
-    // #endregion agent log H3
     
     // Update URL to tile permalink (unless this is from a popstate event or initial load)
     // CLEAN BREAK: Navigate to tile permalink instead of query param
@@ -2026,9 +1929,6 @@
         !URLStateManager.isPopStateUpdate() && 
         !URLStateManager.isInitialLoad() &&
         item.permalink) {
-      // #region agent log H3
-      logMobile({hypothesisId:'H3',location:'openSpotlight:url-updating',message:'Updating URL',data:{permalink:item.permalink}});
-      // #endregion agent log H3
       // Store kit base URL before navigating to tile
       URLStateManager.storeKitBaseURL();
       
@@ -2039,47 +1939,20 @@
     
     state.allItems = sortItemsByMasonryOrder(state.allItems);
     
-    // #region agent log H3
-    logMobile({hypothesisId:'H3',location:'openSpotlight:after-sort',message:'Checking if item exists in allItems',data:{itemId:item.id,allItemsCount:state.allItems.length,allItemIds:state.allItems.map(i=>i.id).join(',')}});
-    // #endregion agent log H3
     
     const itemIndex = state.allItems.findIndex(i => i.id === item.id);
     if (itemIndex === -1) {
-      // #region agent log H3
-      logMobile({hypothesisId:'H3',location:'openSpotlight:item-not-found',message:'Item not found in allItems - EARLY RETURN',data:{itemId:item.id,itemType:item.type}});
-      // #endregion agent log H3
       return;
     }
-    // #region agent log H3
-    logMobile({hypothesisId:'H3',location:'openSpotlight:item-found',message:'Item found, continuing to create spotlight',data:{itemIndex:itemIndex,itemId:item.id}});
-    // #endregion agent log H3
     state.spotlight.currentIndex = itemIndex;
 
     // MOBILE DIRECT URL FIX: If no tile element OR skipAnimation requested, skip FLIP animation
     // and go directly to slide creation (same path as masonry taps, just without animation)
     if (!tile || skipAnimation || state.isDeepLinkMode) {
-      logMobile({hypothesisId:'DIRECT_URL_FIX',location:'openSpotlight:skip-animation-path',message:'Skipping FLIP animation, creating slide directly',data:{hasTile:!!tile,skipAnimation,isDeepLinkMode:!!state.isDeepLinkMode,itemIndex}});
       
       // Create and show slide content immediately (no FLIP clone animation)
       const slide = createSpotlightSlide(state, item, itemIndex);
       
-      // #region agent log
-      // Hypothesis H9: Check slide dimensions calculation
-      if (window.ABU_DEBUG === true) {
-        console.log('[ABU_DEBUG] openSpotlight:slide-dimensions', {
-          itemId: item.id,
-          originalAspectRatio: item.originalAspectRatio || 'MISSING',
-          width: item.width || 'MISSING',
-          height: item.height || 'MISSING',
-          slideStyleWidth: slide.style.width,
-          slideStyleHeight: slide.style.height,
-          slideStyleTop: slide.style.top,
-          slideStyleLeft: slide.style.left,
-          slideClientWidth: slide.clientWidth,
-          slideClientHeight: slide.clientHeight
-        });
-      }
-      // #endregion
       
       slide.classList.add('is-active');
       slide.dataset.offset = 0;
@@ -2092,28 +1965,6 @@
       content.style.top = '0';
       content.style.left = '0';
       
-      // #region agent log
-      // Hypothesis H10: Check if inline styles are applied to content/tile element
-      if (window.ABU_DEBUG === true) {
-        const contentStyle = window.getComputedStyle(content);
-        const img = content.querySelector('img');
-        const imgStyle = img ? window.getComputedStyle(img) : null;
-        console.log('[ABU_DEBUG] openSpotlight:content-after-styles', {
-          itemId: item.id,
-          contentClassName: content.className,
-          contentStyleWidth: content.style.width,
-          contentStyleHeight: content.style.height,
-          contentComputedWidth: contentStyle.width,
-          contentComputedHeight: contentStyle.height,
-          contentClientWidth: content.clientWidth,
-          contentClientHeight: content.clientHeight,
-          imgStyleWidth: imgStyle ? imgStyle.width : 'NO IMG',
-          imgStyleHeight: imgStyle ? imgStyle.height : 'NO IMG',
-          imgClientWidth: img ? img.clientWidth : 'NO IMG',
-          imgClientHeight: img ? img.clientHeight : 'NO IMG'
-        });
-      }
-      // #endregion
       
       // TEMP DEBUG (Step C) - Log active slide media state after createTileElement
       if (window.ABU_DEBUG === true) {
@@ -2208,38 +2059,6 @@
       state.spotlight.carouselContainer.appendChild(slide);
       state.spotlight.loadedIndices.add(itemIndex);
       
-      // #region agent log
-      // Hypothesis H5: Check spotlight container dimensions
-      if (window.ABU_DEBUG === true) {
-        const spotlightEl = state.spotlight.overlay; // Fixed: use overlay, not element
-        const carouselEl = state.spotlight.carouselContainer;
-        const spotlightStyle = window.getComputedStyle(spotlightEl);
-        const carouselStyle = window.getComputedStyle(carouselEl);
-        const slideStyle = window.getComputedStyle(slide);
-        const contentStyle = window.getComputedStyle(content);
-        
-        console.log('[ABU_DEBUG] openSpotlight:container-dimensions', {
-          itemId: item.id,
-          mode: 'direct-open',
-          spotlightWidth: spotlightEl.clientWidth,
-          spotlightHeight: spotlightEl.clientHeight,
-          spotlightDisplay: spotlightStyle.display,
-          spotlightOpacity: spotlightStyle.opacity,
-          carouselWidth: carouselEl.clientWidth,
-          carouselHeight: carouselEl.clientHeight,
-          carouselDisplay: carouselStyle.display,
-          slideWidth: slide.clientWidth,
-          slideHeight: slide.clientHeight,
-          slideDisplay: slideStyle.display,
-          contentWidth: content.clientWidth,
-          contentHeight: content.clientHeight,
-          contentDisplay: contentStyle.display,
-          contentPosition: contentStyle.position,
-          viewportWidth: window.innerWidth,
-          viewportHeight: window.innerHeight
-        });
-      }
-      // #endregion
       
       // FIX Step D: Ensure lazy-load hydration happens for direct-open spotlight
       // For direct-open (skipAnimation=true), images may have data-src but no src set
@@ -2300,25 +2119,29 @@
       // Show overlay immediately
       requestAnimationFrame(() => {
         overlay.classList.add('is-visible');
-        logMobile({hypothesisId:'DIRECT_URL_FIX',location:'openSpotlight:overlay-visible-no-anim',message:'Overlay visible (no animation mode)',data:{itemId:item.id}});
         
-        // #region agent log
-        // Hypothesis H7: Verify is-visible class was added
-        if (window.ABU_DEBUG === true) {
-          const overlayStyle = window.getComputedStyle(overlay);
-          console.log('[ABU_DEBUG] openSpotlight:overlay-after-visible', {
-            itemId: item.id,
-            hasVisibleClass: overlay.classList.contains('is-visible'),
-            overlayOpacity: overlayStyle.opacity,
-            overlayPointerEvents: overlayStyle.pointerEvents,
-            backdropBg: overlay.querySelector('.abu-pg-spotlight-backdrop') ? window.getComputedStyle(overlay.querySelector('.abu-pg-spotlight-backdrop')).background : 'NO BACKDROP'
-          });
-        }
-        // #endregion
       });
       
       // Bind interactions
       bindSpotlightInteractions(content, item, state, true);
+      
+      // Show "tap to play" prompt on direct URL video tiles (browser blocks autoplay)
+      if (isInitialPermalinkVisit && item.type === 'video') {
+        const playPrompt = document.createElement('div');
+        playPrompt.className = 'abu-pg-spotlight-play-prompt';
+        playPrompt.textContent = 'Tap to play';
+        content.appendChild(playPrompt);
+        isInitialPermalinkVisit = false; // Consume flag — only show once
+        
+        // Remove prompt when video starts playing
+        const video = content.querySelector('video');
+        if (video) {
+          video.addEventListener('playing', () => {
+            playPrompt.style.opacity = '0';
+            setTimeout(() => playPrompt.remove(), 200);
+          }, { once: true });
+        }
+      }
       
       // Preload adjacent tiles
       preloadAdjacentTiles(state);
@@ -2331,19 +2154,7 @@
     // NORMAL MASONRY TAP PATH: Full FLIP animation (requires tile element)
     const rect = tile.getBoundingClientRect();
     const tileImg = item.type === 'image' ? tile.querySelector('img') : null;
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'F',location:'gallery.js:466',message:'openSpotlight rect',data:{type:item.type||'',hasTileImg:tileImg?'yes':'no',rectW:rect.width||0,rectH:rect.height||0},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
-    // #region agent log
-    logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'F',location:'gallery.js:466',message:'openSpotlight rect (https)',data:{type:item.type||'',hasTileImg:tileImg?'yes':'no',rectW:rect.width||0,rectH:rect.height||0},timestamp:Date.now()});
-    // #endregion agent log
     if (item.type === 'image') {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'F',location:'gallery.js:466',message:'tile image state',data:{hasTileImg:tileImg?'yes':'no',tileSrc:tileImg?tileImg.getAttribute('src')||'':'',tileCurrentSrc:tileImg&&tileImg.currentSrc?tileImg.currentSrc:'',tileDataSrc:tileImg?tileImg.getAttribute('data-src')||'':'',tileComplete:tileImg&&tileImg.complete?'yes':'no',tileNaturalWidth:tileImg?tileImg.naturalWidth||0:0},timestamp:Date.now()})}).catch(()=>{});
-      if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-        fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'F',location:'gallery.js:466',message:'tile image state',data:{hasTileImg:tileImg?'yes':'no',tileSrc:tileImg?tileImg.getAttribute('src')||'':'',tileCurrentSrc:tileImg&&tileImg.currentSrc?tileImg.currentSrc:'',tileDataSrc:tileImg?tileImg.getAttribute('data-src')||'':'',tileComplete:tileImg&&tileImg.complete?'yes':'no',tileNaturalWidth:tileImg?tileImg.naturalWidth||0:0},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-      }
-      // #endregion agent log
     }
     const ratio = item.originalAspectRatio || getAspectRatio(item);
     const target = getFitRect(ratio, window.innerWidth, window.innerHeight);
@@ -2363,12 +2174,6 @@
     clone.style.setProperty('--abu-pg-radius-end', '0px');
 
     if (item.type === 'image') {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'D',location:'gallery.js:472',message:'spotlight clone start',data:{tileType:item.type||'',hasTileImg:tile.querySelector('img')?'yes':'no',previewSrc:item.previewSrc||''},timestamp:Date.now()})}).catch(()=>{});
-      if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-        fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'D',location:'gallery.js:472',message:'spotlight clone start',data:{tileType:item.type||'',hasTileImg:tile.querySelector('img')?'yes':'no',previewSrc:item.previewSrc||''},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-      }
-      // #endregion agent log
       const cloneImg = clone.querySelector('img');
       if (cloneImg) {
         let clonePreview =
@@ -2403,19 +2208,7 @@
         cloneImg.removeAttribute('data-src');
         cloneImg.removeAttribute('data-srcset');
         cloneImg.removeAttribute('data-sizes');
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'H',location:'gallery.js:512',message:'clone image data url',data:{usedDataUrl,cloneSrc:cloneImg.getAttribute('src')||''},timestamp:Date.now()})}).catch(()=>{});
-        if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-          fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'H',location:'gallery.js:512',message:'clone image data url',data:{usedDataUrl,cloneSrc:cloneImg.getAttribute('src')||''},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-        }
-        // #endregion agent log
       }
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'D',location:'gallery.js:458',message:'spotlight clone image state',data:{hasCloneImg:cloneImg?'yes':'no',cloneSrc:cloneImg?cloneImg.getAttribute('src')||'':'',cloneDataSrc:cloneImg?cloneImg.getAttribute('data-src')||'':'',previewSrc:item.previewSrc||''},timestamp:Date.now()})}).catch(()=>{});
-      if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-        fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'D',location:'gallery.js:458',message:'spotlight clone image state',data:{hasCloneImg:cloneImg?'yes':'no',cloneSrc:cloneImg?cloneImg.getAttribute('src')||'':'',cloneDataSrc:cloneImg?cloneImg.getAttribute('data-src')||'':'',previewSrc:item.previewSrc||''},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-      }
-      // #endregion agent log
     }
 
     overlay.appendChild(clone);
@@ -2435,21 +2228,18 @@
     // FIX 2: For deep-link mode, skip the slow clone animation
     // Show spotlight content immediately instead of waiting for animation + image load (2+ seconds)
     if (state.isDeepLinkMode) {
-      logDeepLinkTiming('skip_clone_animation_deep_link_mode');
       
       // IMPORTANT: Remove clone immediately - it will cover the real content
       if (clone && clone.parentElement) {
         clone.remove();
         state.spotlight.clone = null;
       }
-      logDeepLinkTiming('clone_removed_immediate');
       
       // Create and show slide content immediately
       const slide = createSpotlightSlide(state, item, itemIndex);
       slide.classList.add('is-active');
       slide.dataset.offset = 0;
       slide.style.transform = 'translateX(0)';
-      logDeepLinkTiming('spotlight_slide_created_immediate', { index: itemIndex });
       
       const content = createTileElement(item, state.templates, state, 'spotlight');
       content.style.width = '100%';
@@ -2457,46 +2247,32 @@
       content.style.position = 'absolute';
       content.style.top = '0';
       content.style.left = '0';
-      logDeepLinkTiming('tile_element_created_immediate', { type: item.type });
       
       slide.appendChild(content);
       carouselContainer.appendChild(slide);
       state.spotlight.loadedIndices.add(itemIndex);
-      logDeepLinkTiming('slide_appended_immediate', { type: item.type });
       
       // Show overlay immediately
       requestAnimationFrame(() => {
         overlay.classList.add('is-visible');
-        logDeepLinkTiming('spotlight_overlay_visible_immediate', { isDeepLink: true });
       });
       
       // Bind interactions
       bindSpotlightInteractions(content, item, state, true);
-      logDeepLinkTiming('spotlight_interactions_bound_immediate', { type: item.type });
       
       // Preload adjacent tiles
       preloadAdjacentTiles(state);
-      logDeepLinkTiming('adjacent_tiles_preload_started_immediate');
       
       return; // Skip the normal clone animation flow
     }
 
     const startAnimation = () => {
-      logDeepLinkTiming('spotlight_animation_start', { isDeepLink: !!state.isDeepLinkMode });
       
       // FIX 1: For deep-link mode, delay overlay reveal until content is ready
       // Normal clicks still show overlay immediately for smooth transition
       if (!state.isDeepLinkMode) {
         overlay.classList.add('is-visible');
-        logDeepLinkTiming('spotlight_overlay_visible_normal_mode', { isDeepLink: false });
-        // #region agent log H1
-        requestAnimationFrame(() => {
-          const overlayStyles = window.getComputedStyle(overlay);
-          logMobile({hypothesisId:'H1',location:'openSpotlight:after-visible-class',message:'Overlay after is-visible class added',data:{overlayOpacity:overlayStyles.opacity,overlayPointerEvents:overlayStyles.pointerEvents,overlayTransition:overlayStyles.transition,hasVisibleClass:overlay.classList.contains('is-visible')}});
-        });
-        // #endregion agent log H1
       } else {
-        logDeepLinkTiming('spotlight_overlay_reveal_delayed', { isDeepLink: true });
       }
       
       const dx = target.left - rect.left;
@@ -2505,12 +2281,6 @@
       if (item.type === 'image') {
         const cloneImg = clone.querySelector('img');
         const styles = cloneImg ? window.getComputedStyle(cloneImg) : null;
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'E',location:'gallery.js:496',message:'spotlight clone computed style',data:{hasCloneImg:cloneImg?'yes':'no',opacity:styles?styles.opacity:'',visibility:styles?styles.visibility:'',display:styles?styles.display:'',width:cloneImg?cloneImg.clientWidth||0:0,height:cloneImg?cloneImg.clientHeight||0:0,naturalWidth:cloneImg?cloneImg.naturalWidth||0:0},timestamp:Date.now()})}).catch(()=>{});
-        if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-          fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'E',location:'gallery.js:496',message:'spotlight clone computed style',data:{hasCloneImg:cloneImg?'yes':'no',opacity:styles?styles.opacity:'',visibility:styles?styles.visibility:'',display:styles?styles.display:'',width:cloneImg?cloneImg.clientWidth||0:0,height:cloneImg?cloneImg.clientHeight||0:0,naturalWidth:cloneImg?cloneImg.naturalWidth||0:0},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-        }
-        // #endregion agent log
       }
     };
     if (state.isIOSWebKit) {
@@ -2529,13 +2299,11 @@
 
     const onTransitionEnd = () => {
       clone.removeEventListener('transitionend', onTransitionEnd);
-      logDeepLinkTiming('clone_animation_complete', { type: item.type });
       
       const slide = createSpotlightSlide(state, item, itemIndex);
       slide.classList.add('is-active');
       slide.dataset.offset = 0;
       slide.style.transform = 'translateX(0)';
-      logDeepLinkTiming('spotlight_slide_created', { index: itemIndex });
       
       const content = createTileElement(item, state.templates, state, 'spotlight');
       content.style.width = '100%';
@@ -2543,67 +2311,16 @@
       content.style.position = 'absolute';
       content.style.top = '0';
       content.style.left = '0';
-      logDeepLinkTiming('tile_element_created', { type: item.type });
       
       slide.appendChild(content);
       carouselContainer.appendChild(slide);
       state.spotlight.loadedIndices.add(itemIndex);
-      logDeepLinkTiming('slide_appended_to_dom', { type: item.type });
       
-      // #region agent log H2-H4
-      requestAnimationFrame(() => {
-        const contentStyles = window.getComputedStyle(content);
-        const img = content.querySelector('img');
-        const imgStyles = img ? window.getComputedStyle(img) : null;
-        logMobile({hypothesisId:'H2',location:'openSpotlight:slide-created',message:'Spotlight slide added to DOM',data:{slideInDOM:document.body.contains(slide),carouselChildren:carouselContainer.children.length,slideWidth:slide.clientWidth,slideHeight:slide.clientHeight,slideHasContent:slide.children.length>0,slideFirstChildClass:slide.children[0]?slide.children[0].className:'none',overlayHasVisibleClass:overlay.classList.contains('is-visible'),contentOpacity:contentStyles.opacity,contentVisibility:contentStyles.visibility,contentDisplay:contentStyles.display,contentWidth:content.clientWidth,contentHeight:content.clientHeight,hasImg:!!img,imgSrc:img?img.src||img.dataset.src||'':'',imgOpacity:imgStyles?imgStyles.opacity:'',imgVisibility:imgStyles?imgStyles.visibility:''}});
-      });
-      // #endregion agent log H2-H4
       
       if (item.type === 'image') {
         const preview = content.querySelector('.abu-pg-spotlight-poster');
         const fullImage = content.querySelector('img:not(.abu-pg-spotlight-poster)');
-        // #region agent log
-        const previewStyles = preview ? window.getComputedStyle(preview) : null;
-        logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'I',location:'gallery.js:589',message:'spotlight content styles',data:{hasPreview:preview?'yes':'no',previewOpacity:previewStyles?previewStyles.opacity:'',previewVisibility:previewStyles?previewStyles.visibility:'',previewW:preview?preview.clientWidth||0:0,previewH:preview?preview.clientHeight||0:0,fullW:fullImage?fullImage.clientWidth||0:0,fullH:fullImage?fullImage.clientHeight||0:0},timestamp:Date.now()});
-        // #endregion agent log
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'I',location:'gallery.js:585',message:'spotlight content appended',data:{hasPreview:preview?'yes':'no',previewComplete:preview&&preview.complete?'yes':'no',previewNaturalWidth:preview?preview.naturalWidth||0:0},timestamp:Date.now()})}).catch(()=>{});
-        if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-          fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'I',location:'gallery.js:585',message:'spotlight content appended',data:{hasPreview:preview?'yes':'no',previewComplete:preview&&preview.complete?'yes':'no',previewNaturalWidth:preview?preview.naturalWidth||0:0},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-        }
-        // #endregion agent log
         const hideClone = () => {
-          // #region agent log
-          const previewStylesAtHide = preview ? window.getComputedStyle(preview) : null;
-          const fullStylesAtHide = fullImage ? window.getComputedStyle(fullImage) : null;
-          logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'J',location:'gallery.js:620',message:'hideClone snapshot',data:{hasPreview:preview?'yes':'no',previewOpacity:previewStylesAtHide?previewStylesAtHide.opacity:'',previewVisibility:previewStylesAtHide?previewStylesAtHide.visibility:'',isImageReady:content.classList.contains('is-image-ready')?'yes':'no'},timestamp:Date.now()});
-          logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'M',location:'gallery.js:621',message:'full image snapshot',data:{fullOpacity:fullStylesAtHide?fullStylesAtHide.opacity:'',fullVisibility:fullStylesAtHide?fullStylesAtHide.visibility:'',fullW:fullImage?fullImage.clientWidth||0:0,fullH:fullImage?fullImage.clientHeight||0:0,fullComplete:fullImage&&fullImage.complete?'yes':'no',fullSrc:fullImage?fullImage.currentSrc||fullImage.getAttribute('src')||'':''},timestamp:Date.now()});
-          logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'O',location:'gallery.js:622',message:'content bg snapshot',data:{bg:window.getComputedStyle(content).backgroundColor||''},timestamp:Date.now()});
-          const targetRect = state.spotlight ? state.spotlight.targetRect : null;
-          if (targetRect) {
-            const centerX = Math.round(targetRect.left + targetRect.width / 2);
-            const centerY = Math.round(targetRect.top + targetRect.height / 2);
-            const topEl = document.elementFromPoint(centerX, centerY);
-            const topStyle = topEl ? window.getComputedStyle(topEl) : null;
-            logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'R',location:'gallery.js:623',message:'top element at hideClone',data:{tag:topEl?topEl.tagName:'',className:topEl?topEl.className||'':'',bg:topStyle?topStyle.backgroundColor||'':'',opacity:topStyle?topStyle.opacity||'':''},timestamp:Date.now()});
-            requestAnimationFrame(() => {
-              const topElNext = document.elementFromPoint(centerX, centerY);
-              const topStyleNext = topElNext ? window.getComputedStyle(topElNext) : null;
-              logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'T',location:'gallery.js:624',message:'top element post-hide (raf1)',data:{tag:topElNext?topElNext.tagName:'',className:topElNext?topElNext.className||'':'',bg:topStyleNext?topStyleNext.backgroundColor||'':'',opacity:topStyleNext?topStyleNext.opacity||'':'',fullComplete:fullImage&&fullImage.complete?'yes':'no'},timestamp:Date.now()});
-              requestAnimationFrame(() => {
-                const topElNext2 = document.elementFromPoint(centerX, centerY);
-                const topStyleNext2 = topElNext2 ? window.getComputedStyle(topElNext2) : null;
-                logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'U',location:'gallery.js:625',message:'top element post-hide (raf2)',data:{tag:topElNext2?topElNext2.tagName:'',className:topElNext2?topElNext2.className||'':'',bg:topStyleNext2?topStyleNext2.backgroundColor||'':'',opacity:topStyleNext2?topStyleNext2.opacity||'':'',fullComplete:fullImage&&fullImage.complete?'yes':'no'},timestamp:Date.now()});
-              });
-            });
-          }
-          // #endregion agent log
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'K',location:'gallery.js:608',message:'spotlight clone hide',data:{isImage:item.type==='image'?'yes':'no',previewComplete:preview&&preview.complete?'yes':'no',previewNaturalWidth:preview?preview.naturalWidth||0:0},timestamp:Date.now()})}).catch(()=>{});
-          if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-            fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'K',location:'gallery.js:608',message:'spotlight clone hide',data:{isImage:item.type==='image'?'yes':'no',previewComplete:preview&&preview.complete?'yes':'no',previewNaturalWidth:preview?preview.naturalWidth||0:0},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-          }
-          // #endregion agent log
           clone.style.opacity = '0';
           setTimeout(() => {
             if (clone && clone.parentElement) {
@@ -2617,22 +2334,9 @@
             hideClone();
             return;
           }
-          // #region agent log
-          fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-gap',hypothesisId:'B',location:'gallery.js:629',message:'hideCloneWhenReady armed',data:{label,hasImg:img?'yes':'no'},timestamp:Date.now()})}).catch(()=>{});
-          // #endregion agent log
-          // #region agent log
-          logDebug({sessionId:'debug-session',runId:'image-gap-https',hypothesisId:'B',location:'gallery.js:629',message:'hideCloneWhenReady armed (https)',data:{label,hasImg:img?'yes':'no'},timestamp:Date.now()});
-          // #endregion agent log
           waitForImageReady(img, label).then(() => waitForImagePaint(img, label)).then(() => {
             requestAnimationFrame(() => {
-              // #region agent log
-              fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'J',location:'gallery.js:595',message:'spotlight preview ready',data:{previewNaturalWidth:img.naturalWidth||0},timestamp:Date.now()})}).catch(()=>{});
-              if (window.abuPgDebug && window.abuPgDebug.enabled && window.abuPgDebug.endpoint) {
-                fetch(`${window.abuPgDebug.endpoint}?action=abu_pg_debug_log`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'image-spotlight',hypothesisId:'J',location:'gallery.js:595',message:'spotlight preview ready',data:{previewNaturalWidth:img.naturalWidth||0},timestamp:Date.now()}),credentials:'same-origin'}).catch(()=>{});
-              }
-              // #endregion agent log
               hideClone();
-              logDeepLinkTiming('clone_hidden_image_ready', { naturalWidth: img.naturalWidth || 0 });
             });
           });
         };
@@ -2641,7 +2345,6 @@
       } else {
         // Video tile
         clone.style.opacity = '0';
-        logDeepLinkTiming('clone_hidden_video', { type: item.type });
         setTimeout(() => {
           if (clone && clone.parentElement) {
             clone.remove();
@@ -2650,10 +2353,8 @@
         }, 200);
       }
       bindSpotlightInteractions(content, item, state, true);
-      logDeepLinkTiming('spotlight_interactions_bound', { type: item.type });
       
       preloadAdjacentTiles(state);
-      logDeepLinkTiming('adjacent_tiles_preload_started');
     };
     clone.addEventListener('transitionend', onTransitionEnd);
   };
@@ -2668,49 +2369,10 @@
       if (tile.dataset.type === 'image' && !templates.image) {
         templates.image = tile.cloneNode(true);
         
-        // #region agent log - image template created
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            location: 'gallery.js:2669',
-            message: 'Image template created',
-            data: {
-              hasButtonContainer: !!templates.image.querySelector('.abu-pg-tile-button-container'),
-              hasDownloadBtn: !!templates.image.querySelector('.abu-pg-download'),
-              tileHtml: templates.image.outerHTML.substring(0, 500)
-            },
-            timestamp: Date.now(),
-            sessionId: 'template-debug',
-            runId: 'v4',
-            hypothesisId: 'TEMPLATE_CREATE'
-          })
-        }).catch(() => {});
-        // #endregion agent log
       }
       if (tile.dataset.type === 'video' && !templates.video) {
         templates.video = tile.cloneNode(true);
         
-        // #region agent log - video template created
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({
-            location: 'gallery.js:2672',
-            message: 'Video template created',
-            data: {
-              hasButtonContainer: !!templates.video.querySelector('.abu-pg-tile-button-container'),
-              hasDownloadBtn: !!templates.video.querySelector('.abu-pg-download'),
-              hasMuteBtn: !!templates.video.querySelector('.abu-pg-mute'),
-              tileHtml: templates.video.outerHTML.substring(0, 500)
-            },
-            timestamp: Date.now(),
-            sessionId: 'template-debug',
-            runId: 'v4',
-            hypothesisId: 'TEMPLATE_CREATE'
-          })
-        }).catch(() => {});
-        // #endregion agent log
       }
     });
     return templates;
@@ -2763,6 +2425,8 @@
         src360: getVideoDataAttr(video, 'data-src-360', 'src360'),
         src720: getVideoDataAttr(video, 'data-src-720', 'src720'),
         poster: getVideoDataAttr(video, 'data-poster', 'poster'),
+        userHasLiked: tile.dataset.userHasLiked === 'true',
+        likeCount: Number(tile.dataset.likeCount || 0),
         element: tile,
         originalIndex,
       };
@@ -2814,30 +2478,6 @@
     const template = item.type === 'video' ? templates.video : templates.image;
     const tile = template ? template.cloneNode(true) : document.createElement('div');
     
-    // #region agent log - check clone immediately
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        location: 'gallery.js:2815',
-        message: 'Tile cloned from template',
-        data: {
-          itemType: item.type,
-          itemId: item.id,
-          context,
-          hasTemplate: !!template,
-          clonedTileHasButtonContainer: !!tile.querySelector('.abu-pg-tile-button-container'),
-          clonedTileHasDownloadBtn: !!tile.querySelector('.abu-pg-download'),
-          templateHasButtonContainer: template ? !!template.querySelector('.abu-pg-tile-button-container') : false,
-          templateHasDownloadBtn: template ? !!template.querySelector('.abu-pg-download') : false
-        },
-        timestamp: Date.now(),
-        sessionId: 'clone-debug',
-        runId: 'v4',
-        hypothesisId: 'CLONE_CHECK'
-      })
-    }).catch(() => {});
-    // #endregion agent log
     
     tile.className = 'abu-pg-tile';
     tile.dataset.id = item.id;
@@ -3069,29 +2709,6 @@
 
     const downloadBtn = tile.querySelector('.abu-pg-download');
     if (downloadBtn) {
-      // #region agent log - download button found
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:3006',
-          message: 'Download button found',
-          data: {
-            context,
-            isSpotlight,
-            isTouchDevice: state.isTouch,
-            willRemove: !isSpotlight && state.isTouch,
-            willShow: isSpotlight || !state.isTouch,
-            itemType: item.type,
-            itemId: item.id
-          },
-          timestamp: Date.now(),
-          sessionId: 'button-debug',
-          runId: 'v3',
-          hypothesisId: 'BUTTON_FOUND'
-        })
-      }).catch(() => {});
-      // #endregion agent log
       
       // Show download button on both mobile and desktop in spotlight
       // Mobile: downloads original for print/high-quality
@@ -3105,31 +2722,34 @@
         downloadBtn.style.display = '';
       }
     } else {
-      // #region agent log - download button NOT found
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:3039',
-          message: 'Download button NOT found',
-          data: {
-            context,
-            isSpotlight,
-            itemType: item.type,
-            itemId: item.id,
-            tileClasses: tile.className,
-            hasButtonContainer: !!tile.querySelector('.abu-pg-tile-button-container')
-          },
-          timestamp: Date.now(),
-          sessionId: 'button-debug',
-          runId: 'v3',
-          hypothesisId: 'BUTTON_MISSING'
-        })
-      }).catch(() => {});
-      // #endregion agent log
     }
 
-    const muteBtn = tile.querySelector('.abu-pg-mute');
+    let muteBtn = tile.querySelector('.abu-pg-mute');
+
+    // If mute button doesn't exist (no PHP template was available to clone),
+    // create it from icon templates. This happens on direct URL visits where
+    // no gallery DOM exists to clone templates from.
+    if (!muteBtn && item.type === 'video' && state.iconTemplates && state.iconTemplates.speakerLoud && state.iconTemplates.speakerOff) {
+      muteBtn = document.createElement('button');
+      muteBtn.type = 'button';
+      muteBtn.className = 'abu-pg-mute yp-icon-button';
+      muteBtn.setAttribute('aria-pressed', 'false');
+      muteBtn.setAttribute('aria-label', 'Mute');
+      muteBtn.innerHTML = `
+        <span class="abu-pg-mute-icon abu-pg-mute-icon-on">${state.iconTemplates.speakerLoud}</span>
+        <span class="abu-pg-mute-icon abu-pg-mute-icon-off">${state.iconTemplates.speakerOff}</span>
+      `;
+
+      // Ensure button container exists
+      let btnContainer = tile.querySelector('.abu-pg-tile-button-container');
+      if (!btnContainer) {
+        btnContainer = document.createElement('div');
+        btnContainer.className = 'abu-pg-tile-button-container';
+        tile.appendChild(btnContainer);
+      }
+      btnContainer.appendChild(muteBtn);
+    }
+
     if (muteBtn && state.isTouch && !isSpotlight) {
       muteBtn.remove();
     }
@@ -3219,7 +2839,8 @@
   
   const getAdjacentItems = (state, currentItem, count = 20) => {
     const sortedItems = sortItemsByMasonryOrder(state.allItems);
-    const currentIndex = sortedItems.findIndex(item => item.id === currentItem.id);
+    const numCurrentId = Number(currentItem.id);
+    const currentIndex = sortedItems.findIndex(item => Number(item.id) === numCurrentId);
     
     if (currentIndex === -1) {
       return sortedItems.slice(0, count);
@@ -3237,7 +2858,7 @@
       }
     }
     
-    return sortedItems.slice(start, end).filter(item => item.id !== currentItem.id);
+    return sortedItems.slice(start, end).filter(item => Number(item.id) !== numCurrentId);
   };
   
   /**
@@ -3271,11 +2892,19 @@
     const leftCluster = document.createElement('div');
     leftCluster.className = 'abu-pg-comment-left';
     
-    // Avatar (circular with initials)
+    // Avatar (profile picture or initials fallback)
     const avatarEl = document.createElement('div');
     avatarEl.className = 'abu-pg-comment-avatar';
-    const initials = comment.author ? comment.author.charAt(0).toUpperCase() : '?';
-    avatarEl.textContent = initials;
+    if (comment.avatarUrl) {
+      const avatarImg = document.createElement('img');
+      avatarImg.src = comment.avatarUrl;
+      avatarImg.alt = comment.author || '';
+      avatarImg.className = 'abu-pg-comment-avatar-img';
+      avatarEl.appendChild(avatarImg);
+    } else {
+      const initials = comment.author ? comment.author.charAt(0).toUpperCase() : '?';
+      avatarEl.textContent = initials;
+    }
     
     // Text block
     const textBlock = document.createElement('div');
@@ -3495,14 +3124,25 @@
     // Append to container, not leftColumn
     container.appendChild(backBtn);
     
-    // #region agent log - back button created
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:3487',message:'Back button created and appended',data:{hasIconContent:!!state.iconTemplates.back,buttonInnerHTML:backBtn.innerHTML.substring(0,50),containerPosition:getComputedStyle(container).position},timestamp:Date.now(),sessionId:'back-button-debug',runId:'v11',hypothesisId:'H1'})}).catch(()=>{});
-    // #endregion agent log
     
     backBtn.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
-      closeDesktopSpotlight(state);
+      
+      // Check if there's a gallery page underneath the spotlight
+      const galleryUnderneath = document.querySelector('.abu-pg-chapters-wrapper');
+      
+      
+      if (galleryUnderneath) {
+        // Gallery-entry path: close spotlight to reveal gallery underneath
+        closeDesktopSpotlight(state);
+      } else if (state.kitContext?.kitUrl) {
+        // Permalink-entry path: no gallery underneath, navigate to kit gallery
+        window.location.href = state.kitContext.kitUrl;
+      } else {
+        // Fallback: just close the spotlight
+        closeDesktopSpotlight(state);
+      }
     });
     
     const mediaContainer = document.createElement('div');
@@ -3518,38 +3158,47 @@
     likeBtn.type = 'button';
     likeBtn.className = 'abu-pg-social-btn abu-pg-like-btn';
     likeBtn.dataset.mediaId = item.id;
-    likeBtn.dataset.mediaFilename = item.filename || '';
-    likeBtn.dataset.mediaUrl = item.url || '';
-    likeBtn.dataset.state = 'unliked';
-    likeBtn.setAttribute('aria-label', 'Like');
-    if (state.iconTemplates.heart) {
-      likeBtn.innerHTML = state.iconTemplates.heart;
-    }
+    const alreadyLiked = !!item.userHasLiked;
+    likeBtn.dataset.state = alreadyLiked ? 'liked' : 'unliked';
+    likeBtn.setAttribute('aria-label', alreadyLiked ? 'Unlike' : 'Like');
+    likeBtn.innerHTML = (alreadyLiked ? state.iconTemplates.heartFilled : state.iconTemplates.heart) || '';
     
-    const commentBtn = document.createElement('button');
-    commentBtn.type = 'button';
-    commentBtn.className = 'abu-pg-social-btn abu-pg-comment-btn';
-    commentBtn.dataset.mediaId = item.id;
-    commentBtn.dataset.mediaFilename = item.filename || '';
-    commentBtn.dataset.mediaUrl = item.url || '';
-    commentBtn.setAttribute('aria-label', 'Comment');
-    if (state.iconTemplates.chatBubble) {
-      commentBtn.innerHTML = state.iconTemplates.chatBubble;
-    }
+    // Like count display
+    const likeCount = document.createElement('span');
+    likeCount.className = 'abu-pg-like-count';
+    likeCount.textContent = item.likeCount > 0 ? String(item.likeCount) : '';
+    likeCount.dataset.count = item.likeCount || 0;
     
     const shareBtn = document.createElement('button');
     shareBtn.type = 'button';
     shareBtn.className = 'abu-pg-social-btn abu-pg-share-btn';
-    shareBtn.dataset.mediaId = item.id;
-    shareBtn.dataset.mediaFilename = item.filename || '';
-    shareBtn.dataset.mediaUrl = item.url || '';
     shareBtn.setAttribute('aria-label', 'Share');
     if (state.iconTemplates.share2) {
       shareBtn.innerHTML = state.iconTemplates.share2;
     }
+    shareBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      
+      // Copy the current browser URL (already the tile permalink via SPA pushState)
+      // Requires HTTPS (secure context) — works in production
+      navigator.clipboard.writeText(window.location.href).then(() => {
+        const inner = mediaContainer.querySelector('.abu-pg-desktop-spotlight-media-inner');
+        if (!inner) return;
+        const toast = document.createElement('div');
+        toast.className = 'abu-pg-url-copied-toast';
+        toast.textContent = 'URL Copied';
+        inner.appendChild(toast);
+        requestAnimationFrame(() => { toast.style.opacity = '1'; });
+        setTimeout(() => {
+          toast.style.opacity = '0';
+          setTimeout(() => toast.remove(), 200);
+        }, 700);
+      });
+    });
     
     buttonsLeft.appendChild(likeBtn);
-    buttonsLeft.appendChild(commentBtn);
+    buttonsLeft.appendChild(likeCount);
     buttonsLeft.appendChild(shareBtn);
     
     const buttonsRight = document.createElement('div');
@@ -3605,7 +3254,7 @@
       shareBtn.style.display = isLoggedIn ? '' : 'none';
     }
     
-    // Add login prompt to like button if not logged in
+    // Like button: toggle like/unlike via AJAX
     if (likeBtn) {
       if (!isLoggedIn) {
         likeBtn.addEventListener('click', (event) => {
@@ -3615,34 +3264,86 @@
             window.location.href = window.abuPgConfig.loginUrl;
           }
         });
+      } else {
+        likeBtn.addEventListener('click', (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          
+          const isLiked = likeBtn.dataset.state === 'liked';
+          const action = isLiked ? 'abu_pg_unlike_tile' : 'abu_pg_like_tile';
+          const tileId = item.id;
+          
+          // Optimistic UI update
+          likeBtn.dataset.state = isLiked ? 'unliked' : 'liked';
+          likeBtn.innerHTML = (isLiked ? state.iconTemplates.heart : state.iconTemplates.heartFilled) || '';
+          
+          // AJAX call
+          const formData = new FormData();
+          formData.append('action', action);
+          formData.append('tile_id', tileId);
+          
+          fetch(window.abuPgConfig.ajaxUrl, {
+            method: 'POST',
+            body: formData,
+          })
+          .then(r => r.json())
+          .then(res => {
+            if (res.success) {
+              // Update item and cached tileData so SPA navigation preserves like state
+              item.userHasLiked = !isLiked;
+              const newCount = res.data.likeCount || 0;
+              item.likeCount = newCount;
+              likeCount.textContent = newCount > 0 ? String(newCount) : '';
+              likeCount.dataset.count = newCount;
+              // Also update the tile in GalleryStateManager cache
+              if (state.kitContext && state.kitContext.kitId) {
+                const cachedKit = GalleryStateManager.getKit(state.kitContext.kitId);
+                if (cachedKit && cachedKit.tiles) {
+                  const cachedTile = cachedKit.tiles.find(t => Number(t.id) === Number(tileId));
+                  if (cachedTile) {
+                    cachedTile.userHasLiked = !isLiked;
+                    cachedTile.likeCount = newCount;
+                  }
+                }
+              }
+            } else {
+              // Revert on failure
+              likeBtn.dataset.state = isLiked ? 'liked' : 'unliked';
+              likeBtn.innerHTML = (isLiked ? state.iconTemplates.heartFilled : state.iconTemplates.heart) || '';
+            }
+          })
+          .catch(() => {
+            // Revert on error
+            likeBtn.dataset.state = isLiked ? 'liked' : 'unliked';
+            likeBtn.innerHTML = (isLiked ? state.iconTemplates.heartFilled : state.iconTemplates.heart) || '';
+          });
+        });
       }
     }
     
     const mediaWrapper = document.createElement('div');
     mediaWrapper.className = 'abu-pg-desktop-spotlight-media-wrapper';
     
+    // Inner wrapper: sizes itself via aspect-ratio (like Pinterest).
+    // All media, overlays, and buttons are children of this div,
+    // so absolute positioning is relative to the media's actual bounds.
+    const mediaInner = document.createElement('div');
+    mediaInner.className = 'abu-pg-desktop-spotlight-media-inner';
+    mediaInner.dataset.mediaType = item.type;
+    const ar = (item.width && item.height) ? `${item.width} / ${item.height}` : '16 / 9';
+    mediaInner.style.aspectRatio = ar;
+    
     if (item.type === 'image') {
       const img = document.createElement('img');
       img.src = item.url;
       img.alt = item.title || '';
-      img.style.cursor = 'default';
-      mediaWrapper.appendChild(img);
+      mediaInner.appendChild(img);
     } else if (item.type === 'video') {
-      console.log('Rendering desktop spotlight video:', {
-        id: item.id,
-        url: item.url,
-        src720: item.src720,
-        src360: item.src360,
-        srcOriginal: item.srcOriginal,
-        poster: item.poster
-      });
-      
       const video = document.createElement('video');
       video.className = 'abu-pg-video';
       video.setAttribute('playsinline', '');
       video.setAttribute('loop', '');
       video.setAttribute('preload', 'auto');
-      video.style.cursor = 'pointer';
       
       const chosenSrc = item.src720 || item.src360 || item.srcOriginal || item.url;
       if (!chosenSrc) {
@@ -3656,7 +3357,6 @@
       video.appendChild(source);
       
       // For deep links, start muted to allow autoplay (browser policy)
-      // For normal gallery clicks, start unmuted (user interaction allows it)
       const isDeepLinkMode = state.isDeepLink || false;
       video.volume = isDeepLinkMode ? 0 : 1;
       video.muted = isDeepLinkMode;
@@ -3666,21 +3366,10 @@
         const posterImg = document.createElement('img');
         posterImg.className = 'abu-pg-desktop-spotlight-poster';
         posterImg.src = posterUrl;
-        posterImg.style.position = 'absolute';
-        posterImg.style.top = '50%';
-        posterImg.style.left = '50%';
-        posterImg.style.transform = 'translate(-50%, -50%)';
-        posterImg.style.maxWidth = '80%';
-        posterImg.style.maxHeight = '80%';
-        posterImg.style.width = 'auto';
-        posterImg.style.height = 'auto';
-        posterImg.style.objectFit = 'contain';
-        posterImg.style.zIndex = '2';
-        posterImg.style.pointerEvents = 'none';
-        mediaWrapper.appendChild(posterImg);
+        mediaInner.appendChild(posterImg);
       }
       
-      mediaWrapper.appendChild(video);
+      mediaInner.appendChild(video);
       
       if (muteBtn) {
         muteBtn.addEventListener('click', (event) => {
@@ -3707,12 +3396,27 @@
         }
       });
       
+      // Show "Click to play" prompt on direct URL video tiles
+      if (isInitialPermalinkVisit && posterUrl) {
+        const playPrompt = document.createElement('div');
+        playPrompt.className = 'abu-pg-desktop-spotlight-play-prompt';
+        playPrompt.textContent = 'Click to play';
+        mediaInner.appendChild(playPrompt);
+        isInitialPermalinkVisit = false;
+      }
+      
       const hidePosterAndPlay = () => {
         const posterImg = mediaWrapper.querySelector('.abu-pg-desktop-spotlight-poster');
         if (posterImg) {
           posterImg.style.opacity = '0';
           posterImg.style.transition = 'opacity 180ms ease';
           setTimeout(() => posterImg.remove(), 200);
+        }
+        const playPrompt = mediaWrapper.querySelector('.abu-pg-desktop-spotlight-play-prompt');
+        if (playPrompt) {
+          playPrompt.style.opacity = '0';
+          playPrompt.style.transition = 'opacity 180ms ease';
+          setTimeout(() => playPrompt.remove(), 200);
         }
       };
       
@@ -3732,6 +3436,23 @@
       setTimeout(attemptPlay, 50);
     }
     
+    // Fullscreen maximize button — child of mediaInner, positioned at media's corner
+    if (state.iconTemplates && state.iconTemplates.maximize) {
+      const fullscreenBtn = document.createElement('button');
+      fullscreenBtn.type = 'button';
+      fullscreenBtn.className = 'abu-pg-fullscreen-btn yp-icon-button';
+      fullscreenBtn.setAttribute('aria-label', 'View fullscreen');
+      fullscreenBtn.innerHTML = state.iconTemplates.maximize;
+      mediaInner.appendChild(fullscreenBtn);
+      
+      fullscreenBtn.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openFullscreen(mediaWrapper, item, state);
+      });
+    }
+    
+    mediaWrapper.appendChild(mediaInner);
     mediaContainer.appendChild(mediaWrapper);
     
     // Add comment section inside mediaContainer (below the media, inside grey border)
@@ -3876,10 +3597,6 @@
           return;
         }
         
-        // #region agent log
-        // Hypothesis A: Track if click handler fires
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:2753',message:'Right column tile clicked',data:{clickedTileId:item.id,hasPermalink:!!item.permalink,hasKitContext:!!state.kitContext,kitId:state.kitContext?.kitId},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'A'})}).catch(()=>{});
-        // #endregion
         
         // PHASE 3: Use SPA navigation instead of full page reload
         logNav('Right Column Tile Click', {
@@ -3895,10 +3612,6 @@
           // SPA navigation: no page reload
           navigateToTile(item.id, item.permalink, kitId);
         } else if (item.permalink) {
-          // #region agent log
-          // Hypothesis A: Track fallback to full navigation
-          fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:2775',message:'Fallback to full navigation (no kitId)',data:{tileId:item.id,permalink:item.permalink},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'A'})}).catch(()=>{});
-          // #endregion
           window.location.href = item.permalink;
         } else {
           // Fallback: switch media in current spotlight if no permalink
@@ -4090,9 +3803,179 @@
     state.desktopSpotlight.resizeHandler = handleResize;
     window.addEventListener('resize', handleResize);
     
+    // Register this spotlight with GalleryStateManager so SPA navigation
+    // (navigateToTile → renderSpotlightForTile) can find and reuse it
+    GalleryStateManager.currentSpotlight = state;
+    
     requestAnimationFrame(() => {
       state.desktopSpotlight.overlay.classList.add('is-visible');
     });
+  };
+  
+  /**
+   * Open fullscreen media view from desktop spotlight.
+   * Clones the spotlight media and animates it to center viewport.
+   */
+  const openFullscreen = (mediaWrapper, item, state) => {
+    // #region agent log
+    const ajaxUrl = window.abuPgConfig?.ajaxUrl;
+    if (ajaxUrl) { fetch(ajaxUrl + '?action=abu_pg_debug_log', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({location:'gallery.js:openFullscreen',message:'fullscreen-open',data:{itemId:item.id,itemType:item.type,hasMaximizeIcon:!!(state.iconTemplates&&state.iconTemplates.maximize),hasCross2Icon:!!(state.iconTemplates&&state.iconTemplates.cross2)},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'fullscreen'}) }).catch(() => {}); }
+    // #endregion
+    // Remove any existing fullscreen overlay
+    const existing = document.querySelector('.abu-pg-fullscreen-overlay');
+    if (existing) existing.remove();
+    
+    // Find the source media element in the spotlight
+    const sourceMedia = item.type === 'video'
+      ? mediaWrapper.querySelector('video')
+      : mediaWrapper.querySelector('img:not(.abu-pg-desktop-spotlight-poster)');
+    if (!sourceMedia) return;
+    
+    const sourceRect = sourceMedia.getBoundingClientRect();
+    
+    // Create overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'abu-pg-fullscreen-overlay';
+    
+    // Backdrop
+    const backdrop = document.createElement('div');
+    backdrop.className = 'abu-pg-fullscreen-backdrop';
+    overlay.appendChild(backdrop);
+    
+    // Clone the media
+    let clone;
+    if (item.type === 'video') {
+      // Pause original
+      sourceMedia.pause();
+      const currentTime = sourceMedia.currentTime;
+      
+      // Create new video pointing to same source
+      clone = document.createElement('video');
+      clone.className = 'abu-pg-fullscreen-media';
+      clone.setAttribute('playsinline', '');
+      clone.setAttribute('loop', '');
+      clone.setAttribute('autoplay', '');
+      clone.muted = sourceMedia.muted;
+      clone.volume = sourceMedia.volume;
+      
+      const src = sourceMedia.querySelector('source');
+      if (src) {
+        const newSrc = document.createElement('source');
+        newSrc.src = src.src;
+        newSrc.type = src.type || 'video/mp4';
+        clone.appendChild(newSrc);
+      }
+      clone.currentTime = currentTime;
+    } else {
+      clone = document.createElement('img');
+      clone.className = 'abu-pg-fullscreen-media';
+      clone.src = sourceMedia.src;
+      clone.alt = item.title || '';
+    }
+    
+    // Position clone at source media's current position (starting point for animation)
+    clone.style.position = 'fixed';
+    clone.style.top = sourceRect.top + 'px';
+    clone.style.left = sourceRect.left + 'px';
+    clone.style.width = sourceRect.width + 'px';
+    clone.style.height = sourceRect.height + 'px';
+    clone.style.borderRadius = '0';
+    clone.style.objectFit = 'contain';
+    clone.style.transition = 'none';
+    
+    // Video click-to-play/pause in fullscreen
+    if (item.type === 'video') {
+      clone.style.cursor = 'pointer';
+      clone.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (clone.paused) {
+          clone.play().catch(() => {});
+        } else {
+          clone.pause();
+        }
+      });
+    }
+    
+    overlay.appendChild(clone);
+    
+    // Close button (top-left corner)
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'abu-pg-fullscreen-close';
+    closeBtn.setAttribute('aria-label', 'Close fullscreen');
+    if (state.iconTemplates && state.iconTemplates.cross2) {
+      closeBtn.innerHTML = state.iconTemplates.cross2;
+    }
+    closeBtn.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      closeFullscreen(overlay, sourceMedia, item);
+    });
+    overlay.appendChild(closeBtn);
+    
+    // Clicking backdrop also closes
+    backdrop.addEventListener('click', () => {
+      closeFullscreen(overlay, sourceMedia, item);
+    });
+    
+    document.body.appendChild(overlay);
+    
+    // Animate to center after a frame (so transition triggers)
+    requestAnimationFrame(() => {
+      backdrop.style.opacity = '1';
+      closeBtn.style.opacity = '1';
+      
+      clone.style.transition = 'top 400ms cubic-bezier(0.2, 0.8, 0.2, 1), left 400ms cubic-bezier(0.2, 0.8, 0.2, 1), width 400ms cubic-bezier(0.2, 0.8, 0.2, 1), height 400ms cubic-bezier(0.2, 0.8, 0.2, 1), border-radius 400ms ease';
+      clone.style.top = '50%';
+      clone.style.left = '50%';
+      clone.style.transform = 'translate(-50%, -50%)';
+      clone.style.width = '';
+      clone.style.height = '';
+      clone.style.borderRadius = '0';
+    });
+  };
+  
+  /**
+   * Close fullscreen view and animate media back to spotlight position.
+   */
+  const closeFullscreen = (overlay, sourceMedia, item) => {
+    // #region agent log
+    const ajaxUrl = window.abuPgConfig?.ajaxUrl;
+    if (ajaxUrl) { fetch(ajaxUrl + '?action=abu_pg_debug_log', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({location:'gallery.js:closeFullscreen',message:'fullscreen-close',data:{itemId:item.id,itemType:item.type},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'fullscreen'}) }).catch(() => {}); }
+    // #endregion
+    const clone = overlay.querySelector('.abu-pg-fullscreen-media');
+    const backdrop = overlay.querySelector('.abu-pg-fullscreen-backdrop');
+    const closeBtn = overlay.querySelector('.abu-pg-fullscreen-close');
+    
+    if (!clone) {
+      overlay.remove();
+      return;
+    }
+    
+    // Find where the spotlight media currently is (for return animation)
+    const sourceRect = sourceMedia.getBoundingClientRect();
+    
+    // Animate back
+    backdrop.style.opacity = '0';
+    closeBtn.style.opacity = '0';
+    
+    clone.style.transition = 'top 350ms cubic-bezier(0.2, 0.8, 0.2, 1), left 350ms cubic-bezier(0.2, 0.8, 0.2, 1), width 350ms cubic-bezier(0.2, 0.8, 0.2, 1), height 350ms cubic-bezier(0.2, 0.8, 0.2, 1), border-radius 350ms ease';
+    clone.style.transform = 'none';
+    clone.style.top = sourceRect.top + 'px';
+    clone.style.left = sourceRect.left + 'px';
+    clone.style.width = sourceRect.width + 'px';
+    clone.style.height = sourceRect.height + 'px';
+    clone.style.borderRadius = '0';
+    
+    setTimeout(() => {
+      // Resume original video from clone's time
+      if (item.type === 'video' && sourceMedia) {
+        sourceMedia.currentTime = clone.currentTime || 0;
+        sourceMedia.play().catch(() => {});
+      }
+      overlay.remove();
+    }, 380);
   };
   
   const closeDesktopSpotlight = (state) => {
@@ -4100,10 +3983,6 @@
       return;
     }
     
-    // #region agent log - check gallery on close
-    const mainGallery = document.querySelector('.abu-pg-chapters-wrapper');
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4098',message:'Closing desktop spotlight',data:{mainGalleryExists:!!mainGallery,mainGalleryVisible:mainGallery ? getComputedStyle(mainGallery).display !== 'none' : false,tileCount:mainGallery ? mainGallery.querySelectorAll('.abu-pg-tile').length : 0},timestamp:Date.now(),sessionId:'close-debug',runId:'v11',hypothesisId:'GALLERY_CHECK'})}).catch(()=>{});
-    // #endregion agent log
     
     // Restore kit base URL (unless this is from a popstate event or initial load)
     // CLEAN BREAK: Return to kit URL instead of removing query param
@@ -4131,6 +4010,7 @@
         state.desktopSpotlight.overlay.remove();
       }
       state.desktopSpotlight = null;
+      GalleryStateManager.currentSpotlight = null;
       unlockScroll(state);
     }, 260);
   };
@@ -4409,16 +4289,10 @@
     };
     
     // Cache templates in GalleryStateManager for reuse across spotlights
-    // #region agent log - cache templates
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4398',message:'Caching templates in initGallery',data:{hasTemplates:!!state.templates,hasImage:!!state.templates?.image,hasVideo:!!state.templates?.video,willCache:!!(state.templates && (state.templates.image || state.templates.video)),cacheAlreadyExists:!!(GalleryStateManager.tileTemplates && (GalleryStateManager.tileTemplates.image || GalleryStateManager.tileTemplates.video))},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v10',hypothesisId:'H2_CACHE'})}).catch(()=>{});
-    // #endregion agent log
     // Only cache if we have valid templates AND the cache is empty (first gallery wins)
     if (state.templates && (state.templates.image || state.templates.video)) {
       if (!GalleryStateManager.tileTemplates || (!GalleryStateManager.tileTemplates.image && !GalleryStateManager.tileTemplates.video)) {
         GalleryStateManager.tileTemplates = state.templates;
-        // #region agent log - cached confirmation
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4399',message:'Templates cached successfully',data:{cachedImage:!!GalleryStateManager.tileTemplates.image,cachedVideo:!!GalleryStateManager.tileTemplates.video},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v10',hypothesisId:'H2_CACHE'})}).catch(()=>{});
-        // #endregion agent log
       }
     }
 
@@ -4505,28 +4379,33 @@
     if (speakerOffTemplate) {
       state.iconTemplates.speakerOff = speakerOffTemplate.innerHTML;
     }
+    
+    const maximizeTemplate = document.querySelector('.abu-pg-icon-template[data-icon="maximize"]');
+    if (maximizeTemplate) {
+      state.iconTemplates.maximize = maximizeTemplate.innerHTML;
+    }
+    
+    const cross2Template = document.querySelector('.abu-pg-icon-template[data-icon="cross-2"]');
+    if (cross2Template) {
+      state.iconTemplates.cross2 = cross2Template.innerHTML;
+    }
 
     const builtItems = buildItemsFromDOM(gallery);
     state.allItems = builtItems;
     state.activeItems = state.allItems.slice();
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        sessionId: 'debug-session',
-        runId: 'pre-fix',
-        hypothesisId: 'D',
-        location: 'gallery.js:1068',
-        message: 'initGallery built items',
-        data: {
-          total: state.allItems.length,
-          videoCount: state.allItems.filter((item) => item.type === 'video').length,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion agent log
+    
+    // Set kit context reference on state (kitId only — full tile data is seeded
+    // into GalleryStateManager after ALL chapters are initialized)
+    const chaptersWrapper = gallery.closest('.abu-pg-chapters-wrapper') || document.querySelector('.abu-pg-chapters-wrapper');
+    const kitId = chaptersWrapper?.dataset?.postId;
+    if (kitId) {
+      const kitUrl = window.location.pathname + window.location.search;
+      state.kitContext = {
+        kitId: Number(kitId),
+        kitUrl: kitUrl,
+        kitTitle: document.title || '',
+      };
+    }
 
     state.visibleCount = Math.min(state.initialCount, state.activeItems.length);
     
@@ -4607,23 +4486,14 @@
    * Opens spotlight immediately, then loads gallery in background
    */
   const initDirectMode = () => {
-    console.log('[DEBUG] initDirectMode CALLED');
     
     const directContainer = document.querySelector('.abu-pg-direct-mode');
-    console.log('[DEBUG] directContainer:', directContainer);
     
     if (!directContainer) {
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'direct-mode-detection',hypothesisId:'M',location:'gallery.js:3344',message:'initDirectMode - no container found',data:{},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
       return false;
     }
     
-    console.log('[DEBUG] Direct container FOUND, itemId:', directContainer.dataset.itemId);
     
-    // #region agent log
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'direct-mode-detection',hypothesisId:'N',location:'gallery.js:3353',message:'initDirectMode - container found',data:{itemId:directContainer.dataset.itemId,chapterSlug:directContainer.dataset.chapterSlug},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion agent log
     
     const itemId = directContainer.dataset.itemId;
     const chapterSlug = directContainer.dataset.chapterSlug;
@@ -4633,14 +4503,9 @@
     
     // Show spotlight immediately (already rendered by PHP)
     const spotlightDirect = directContainer.querySelector('.abu-pg-spotlight-direct');
-    console.log('[DEBUG] spotlightDirect element:', spotlightDirect);
     
     if (spotlightDirect) {
-      console.log('[DEBUG] About to add is-visible class');
       
-      // #region agent log
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'direct-mode-detection',hypothesisId:'O',location:'gallery.js:3370',message:'Found spotlight-direct element',data:{hasIsVisibleClass:spotlightDirect.classList.contains('is-visible')},timestamp:Date.now()})}).catch(()=>{});
-      // #endregion agent log
       
       // Initialize main tile in spotlight left column
       const mainTile = spotlightDirect.querySelector('.abu-pg-spotlight-left .abu-pg-tile');
@@ -4650,13 +4515,7 @@
       
       requestAnimationFrame(() => {
         spotlightDirect.classList.add('is-visible');
-        console.log('[DEBUG] is-visible class ADDED. classList:', spotlightDirect.className);
-        console.log('[DEBUG] computed opacity:', window.getComputedStyle(spotlightDirect).opacity);
-        console.log('[DEBUG] computed zIndex:', window.getComputedStyle(spotlightDirect).zIndex);
         
-        // #region agent log
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sessionId:'debug-session',runId:'direct-mode-detection',hypothesisId:'P',location:'gallery.js:3385',message:'Added is-visible class',data:{classListAfter:spotlightDirect.className,computedDisplay:window.getComputedStyle(spotlightDirect).display,computedOpacity:window.getComputedStyle(spotlightDirect).opacity,computedZIndex:window.getComputedStyle(spotlightDirect).zIndex},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion agent log
       });
       
       // Bind back button
@@ -4772,6 +4631,46 @@
         const instance = initGallery(gallery);
         galleryInstances.push(instance);
       });
+      
+      // Seed GalleryStateManager with ALL tiles from ALL chapters
+      // This enables SPA navigation when clicking tiles in the spotlight right column
+      if (galleryInstances.length > 0 && galleryInstances[0].kitContext) {
+        const kitId = galleryInstances[0].kitContext.kitId;
+        const kitUrl = galleryInstances[0].kitContext.kitUrl;
+        const allTiles = [];
+        galleryInstances.forEach(inst => {
+          (inst.allItems || []).forEach(t => {
+            allTiles.push({
+              id: Number(t.id),
+              attachmentId: Number(t.attachmentId || 0),
+              type: t.type,
+              url: t.url,
+              permalink: t.permalink || '',
+              title: t.title || '',
+              filename: t.filename || '',
+              created: t.createdAt || '',
+              width: t.width || 0,
+              height: t.height || 0,
+              gridUrl: t.gridUrl || '',
+              webUrl: t.webUrl || '',
+              originalUrl: t.originalUrl || '',
+              gridSrcset: t.gridSrcset || '',
+              gridSizes: t.gridSizes || '',
+              previewSrc: t.previewSrc || '',
+              poster: t.poster || '',
+              src720: t.src720 || '',
+              src360: t.src360 || '',
+              srcOriginal: t.srcOriginal || '',
+            });
+          });
+        });
+        GalleryStateManager.setKit(kitId, {
+          kitId: kitId,
+          kitUrl: kitUrl,
+          kitTitle: document.title || '',
+          tiles: allTiles
+        });
+      }
       
       // Initialize URL state manager with gallery instances (needed for back button functionality)
       if (typeof URLStateManager !== 'undefined' && galleryInstances.length > 0) {
@@ -5016,6 +4915,8 @@
       width: tileData.width || 0,
       height: tileData.height || 0,
       masonryAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
+      userHasLiked: !!tileData.userHasLiked,
+      likeCount: Number(tileData.likeCount || 0),
     };
     
     // Add image-specific fields
@@ -5138,7 +5039,6 @@
    * This ensures 100% identical behavior to clicking a tile in the gallery.
    */
   const openMobileSpotlightFromData = (tileData) => {
-    logDeepLinkTiming('mobile_spotlight_start', { tileId: tileData.id, type: tileData.type });
     console.log('[Deep Link] Opening mobile Spotlight for tile:', tileData.id);
     
     // Convert tileData to item format expected by existing spotlight code
@@ -5153,6 +5053,8 @@
       height: tileData.height || 0,
       originalAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
       masonryAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
+      userHasLiked: !!tileData.userHasLiked,
+      likeCount: Number(tileData.likeCount || 0),
       element: null, // No DOM element for deep link
     };
     
@@ -5172,7 +5074,6 @@
       item.poster = tileData.poster || '';
     }
     
-    logDeepLinkTiming('item_data_converted', { type: item.type, hasPreview: !!item.previewSrc, hasPoster: !!item.poster });
     
     // Convert adjacent tiles to item format (for navigation)
     const allItems = [item];
@@ -5209,7 +5110,6 @@
       });
     }
     
-    logDeepLinkTiming('adjacent_items_converted', { count: allItems.length });
     
     // Create a minimal fake gallery element to get templates
     const fakeGallery = document.createElement('div');
@@ -5254,7 +5154,12 @@
     const speakerOffTemplate = document.querySelector('.abu-pg-icon-template[data-icon="speaker-off"]');
     if (speakerOffTemplate) iconTemplates.speakerOff = speakerOffTemplate.innerHTML;
     
-    logDeepLinkTiming('icon_templates_collected', { hasBack: !!iconTemplates.back });
+    const maximizeTemplate2 = document.querySelector('.abu-pg-icon-template[data-icon="maximize"]');
+    if (maximizeTemplate2) iconTemplates.maximize = maximizeTemplate2.innerHTML;
+    
+    const cross2Template2 = document.querySelector('.abu-pg-icon-template[data-icon="cross-2"]');
+    if (cross2Template2) iconTemplates.cross2 = cross2Template2.innerHTML;
+    
     
     // Create fake tile element for the animation (required by openSpotlight)
     const fakeTile = document.createElement('div');
@@ -5292,11 +5197,9 @@
     document.body.appendChild(fakeTile);
     item.element = fakeTile;
     
-    logDeepLinkTiming('fake_tile_created', { type: item.type });
     
     // Create templates for rendering tile content
     const templates = createTemplates(fakeGallery);
-    logDeepLinkTiming('templates_created', { hasImage: !!templates.image, hasVideo: !!templates.video });
     
     // Create minimal state object that mirrors the structure from initGallery
     const state = {
@@ -5325,28 +5228,22 @@
     // Store state globally for cleanup
     window.abuDeepLinkMobileState = state;
     
-    logDeepLinkTiming('calling_createSpotlight');
     console.log('[Deep Link] Calling createSpotlight (mobile)');
     createSpotlight(state);
     
-    logDeepLinkTiming('spotlight_created', { hasOverlay: !!state.spotlight });
     
     console.log('[Deep Link] Calling openSpotlight with item:', item.id);
-    logDeepLinkTiming('calling_openSpotlight');
     openSpotlight(state, fakeTile, item);
     
-    logDeepLinkTiming('openSpotlight_returned');
     
     // Clean up fake tile after animation completes
     setTimeout(() => {
       if (fakeTile && fakeTile.parentElement) {
         fakeTile.remove();
       }
-      logDeepLinkTiming('fake_tile_cleaned');
     }, 600);
     
     console.log('[Deep Link] Mobile Spotlight opened successfully using existing code');
-    logDeepLinkTiming('mobile_spotlight_complete');
   };
 
   ready(() => {
@@ -5357,33 +5254,27 @@
     
     if (deepLinkContainer) {
       window.abuPgDeepLinkStartTime = Date.now();
-      logDeepLinkTiming('deep_link_detected');
       
       const tileId = deepLinkContainer.dataset.deepLinkTile;
       const tileDataScript = deepLinkContainer.querySelector('.abu-pg-deep-link-data');
       
       if (tileDataScript && tileId) {
         console.log(`[Bootstrap] Deep link detected for tile ${tileId}`);
-        logDeepLinkTiming('tile_data_found', { tileId });
         
         let tileData;
         try {
           tileData = JSON.parse(tileDataScript.textContent);
-          logDeepLinkTiming('tile_data_parsed', { type: tileData.type });
         } catch (error) {
           console.error('[Bootstrap] Failed to parse tile data JSON:', error);
-          logDeepLinkTiming('tile_data_parse_error', { error: error.message });
           tileData = null;
         }
         
         if (tileData) {
           // Open Spotlight immediately (before gallery init)
-          logDeepLinkTiming('calling_openSpotlightFromDeepLink');
           openSpotlightFromDeepLink(tileData);
           
           // Initialize galleries in background (hidden)
           setTimeout(() => {
-            logDeepLinkTiming('background_gallery_init_start');
             const galleries = Array.from(document.querySelectorAll('.abu-pg-gallery'));
             const galleryInstances = [];
             
@@ -5399,7 +5290,6 @@
             }
             
             console.log('[Bootstrap] Background gallery initialized');
-            logDeepLinkTiming('background_gallery_init_complete');
           }, 50);
           
           return;
@@ -5451,9 +5341,6 @@
      * Get or create tile templates
      */
     getTemplates() {
-      // #region agent log - getTemplates entry
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5421',message:'getTemplates called',data:{hasCachedTemplates:!!this.tileTemplates,cachedImageExists:this.tileTemplates?.image ? true : false,cachedVideoExists:this.tileTemplates?.video ? true : false},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion agent log
       
       if (this.tileTemplates) {
         return this.tileTemplates;
@@ -5463,9 +5350,6 @@
       
       // 1. Try main gallery (best source - has all buttons for logged-in users)
       const mainGallery = document.querySelector('.abu-pg-chapters-wrapper');
-      // #region agent log - main gallery check
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5429',message:'Main gallery check',data:{exists:!!mainGallery,tileCount:mainGallery ? mainGallery.querySelectorAll('.abu-pg-tile').length : 0,isVisible:mainGallery ? getComputedStyle(mainGallery).display !== 'none' : false,hasButtonsInFirstTile:mainGallery && mainGallery.querySelector('.abu-pg-tile') ? !!mainGallery.querySelector('.abu-pg-tile').querySelector('.abu-pg-tile-button-container') : false},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H3'})}).catch(()=>{});
-      // #endregion agent log
       if (mainGallery && mainGallery.querySelectorAll('.abu-pg-tile').length > 0) {
         this.tileTemplates = createTemplates(mainGallery);
         return this.tileTemplates;
@@ -5486,9 +5370,6 @@
       }
       
       // 4. Fallback: return empty templates
-      // #region agent log - template fallback
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5450',message:'No valid templates found - returning empty',data:{},timestamp:Date.now(),sessionId:'template-cache-debug',runId:'v9',hypothesisId:'H2'})}).catch(()=>{});
-      // #endregion agent log
       return { image: null, video: null };
     },
     
@@ -5583,10 +5464,6 @@
       // Bootstrap from server via REST API
       logNav('GalleryStateManager.ensureKit fetching from server', { kitId });
       
-      // #region agent log
-      // Hypothesis C: Track REST API fetch attempt
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4311',message:'Fetching kit from REST API',data:{kitId,url:`/wp-json/abu-pg/v1/kit/${kitId}/tiles`},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'C'})}).catch(()=>{});
-      // #endregion
       
       try {
         // Use WP REST API to fetch kit tiles (Phase 4 server endpoint needed)
@@ -5594,10 +5471,6 @@
           credentials: 'same-origin'
         });
         
-        // #region agent log
-        // Hypothesis C: Track REST API response
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4323',message:'REST API response received',data:{kitId,status:response.status,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         
         if (!response.ok) {
           throw new Error(`Server returned ${response.status}`);
@@ -5605,10 +5478,6 @@
         
         const data = await response.json();
         
-        // #region agent log
-        // Hypothesis C: Track REST API data
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4335',message:'REST API data parsed',data:{kitId,hasTiles:!!data?.tiles,tileCount:data?.tiles?.length||0,hasKitUrl:!!data?.kitUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'C'})}).catch(()=>{});
-        // #endregion
         
         if (data && data.tiles && Array.isArray(data.tiles)) {
           const kitContext = {
@@ -5656,10 +5525,6 @@
    * Uses cached kit context and History API.
    */
   async function navigateToTile(tileId, tilePermalink, kitId) {
-    // #region agent log
-    // Hypothesis A: Track navigateToTile entry
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4348',message:'navigateToTile called',data:{tileId,tilePermalink,kitId},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     
     logNav('navigateToTile', { tileId, tilePermalink, kitId });
     
@@ -5668,10 +5533,6 @@
     if (kitId) {
       kitContext = await GalleryStateManager.ensureKit(kitId);
       
-      // #region agent log
-      // Hypothesis B: Track if kit context was found
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4358',message:'ensureKit result',data:{kitId,hasContext:!!kitContext,tileCount:kitContext?.tiles?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'B'})}).catch(()=>{});
-      // #endregion
       
       if (!kitContext) {
         logNav('navigateToTile fallback to full navigation', { 
@@ -5683,13 +5544,10 @@
       }
     }
     
-    // Find tile data in cached context
-    const tileData = kitContext?.tiles?.find(t => t.id === tileId);
+    // Find tile data in cached context (normalize to Number for consistent comparison)
+    const numericTileId = Number(tileId);
+    const tileData = kitContext?.tiles?.find(t => Number(t.id) === numericTileId);
     
-    // #region agent log
-    // Hypothesis B: Track if tile found in cache
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4378',message:'Tile lookup in cache',data:{tileId,foundInCache:!!tileData,totalTilesInCache:kitContext?.tiles?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'B'})}).catch(()=>{});
-    // #endregion
     
     if (!tileData) {
       logNav('navigateToTile fallback to full navigation', { 
@@ -5712,10 +5570,6 @@
       newUrl
     );
     
-    // #region agent log
-    // Hypothesis A: Track history state update
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4392',message:'History pushState called',data:{tileId,newUrl,historyState:history.state},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'A'})}).catch(()=>{});
-    // #endregion
     
     logNav('navigateToTile history.pushState', { 
       tileId, 
@@ -5731,10 +5585,6 @@
    * PHASE 3: Render spotlight for a specific tile (SPA mode)
    */
   function renderSpotlightForTile(tileData, kitContext) {
-    // #region agent log
-    // Hypothesis D: Track renderSpotlightForTile entry
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4405',message:'renderSpotlightForTile called',data:{tileId:tileData.id,kitId:kitContext?.kitId,totalTiles:kitContext?.tiles?.length||0},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'D'})}).catch(()=>{});
-    // #endregion
     
     logNav('renderSpotlightForTile', {
       tileId: tileData.id,
@@ -5757,6 +5607,8 @@
       height: tileData.height || 0,
       originalAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
       masonryAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
+      userHasLiked: !!tileData.userHasLiked,
+      likeCount: Number(tileData.likeCount || 0),
     };
     
     // Add media-specific fields
@@ -5777,55 +5629,18 @@
     // Get or create state object
     let state = GalleryStateManager.currentSpotlight;
     
-    // #region agent log - state check
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({
-        location: 'gallery.js:5698',
-        message: 'renderSpotlightForTile state check',
-        data: {
-          hasState: !!state,
-          hasDesktopSpotlight: state?.desktopSpotlight ? true : false,
-          hasTemplates: state?.templates ? true : false,
-          templateImageExists: state?.templates?.image ? true : false,
-          templateVideoExists: state?.templates?.video ? true : false
-        },
-        timestamp: Date.now(),
-        sessionId: 'state-debug',
-        runId: 'v5',
-        hypothesisId: 'STATE_REUSE'
-      })
-    }).catch(() => {});
-    // #endregion agent log
     
     if (!state || !state.desktopSpotlight) {
       // Get tile templates from GalleryStateManager (cached or created once)
       const tileTemplates = GalleryStateManager.getTemplates();
       
-      // #region agent log - template creation
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:5702',
-          message: 'Got templates from GalleryStateManager',
-          data: {
-            hasImageTemplate: !!tileTemplates.image,
-            hasVideoTemplate: !!tileTemplates.video
-          },
-          timestamp: Date.now(),
-          sessionId: 'state-debug',
-          runId: 'v6',
-          hypothesisId: 'TEMPLATE_CREATION'
-        })
-      }).catch(() => {});
-      // #endregion agent log
       
       // Create new spotlight state
       state = {
         container: document.body,
         isSpotlightEnabled: true,
+        isTouch: window.matchMedia && window.matchMedia('(hover: none)').matches,
+        isIOSWebKit: isIOSWebKit(),
         allItems: kitContext.tiles.map(t => ({
           id: t.id,
           type: t.type,
@@ -5876,6 +5691,8 @@
       state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
       state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
       state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
+      state.iconTemplates.maximize = getIconTemplate('maximize');
+      state.iconTemplates.cross2 = getIconTemplate('cross-2');
       
       state.activeItems = state.allItems;
       
@@ -5893,24 +5710,6 @@
     if (!state.templates || !state.templates.image || !state.templates.video) {
       state.templates = GalleryStateManager.getTemplates();
       
-      // #region agent log - template refresh
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:5848',
-          message: 'Refreshed templates on state',
-          data: {
-            hasImageTemplate: !!state.templates.image,
-            hasVideoTemplate: !!state.templates.video
-          },
-          timestamp: Date.now(),
-          sessionId: 'state-debug',
-          runId: 'v8',
-          hypothesisId: 'TEMPLATE_REFRESH'
-        })
-      }).catch(() => {});
-      // #endregion agent log
     }
     
     // Ensure state has valid icon templates (for both new state and reused state)
@@ -5930,70 +5729,25 @@
       state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
       state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
       state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
+      state.iconTemplates.maximize = getIconTemplate('maximize');
+      state.iconTemplates.cross2 = getIconTemplate('cross-2');
       
-      // #region agent log - icon template refresh
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:5905',message:'Icon templates refreshed on state reuse',data:{back:!!state.iconTemplates.back,paperPlane:!!state.iconTemplates.paperPlane,paperPlaneLength:state.iconTemplates.paperPlane?.length || 0},timestamp:Date.now(),sessionId:'icon-debug',runId:'v9',hypothesisId:'H4'})}).catch(()=>{});
-      // #endregion agent log
       
-      // #region agent log - icon refresh
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:5880',
-          message: 'Refreshed icon templates on state',
-          data: {
-            backIconExists: !!state.iconTemplates.back,
-            paperPlaneIconExists: !!state.iconTemplates.paperPlane
-          },
-          timestamp: Date.now(),
-          sessionId: 'state-debug',
-          runId: 'v8',
-          hypothesisId: 'ICON_REFRESH'
-        })
-      }).catch(() => {});
-      // #endregion agent log
     }
     
     // Render spotlight content
     if (!useMobileLayout) {
-      // #region agent log - check icon templates before render
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-          location: 'gallery.js:5850',
-          message: 'About to render spotlight media',
-          data: {
-            hasState: !!state,
-            hasIconTemplates: !!state.iconTemplates,
-            backIconExists: state.iconTemplates?.back ? true : false,
-            paperPlaneIconExists: state.iconTemplates?.paperPlane ? true : false,
-            hasTemplates: !!state.templates,
-            imageTemplateExists: state.templates?.image ? true : false,
-            videoTemplateExists: state.templates?.video ? true : false
-          },
-          timestamp: Date.now(),
-          sessionId: 'state-debug',
-          runId: 'v7',
-          hypothesisId: 'ICON_CHECK'
-        })
-      }).catch(() => {});
-      // #endregion agent log
       
       renderDesktopSpotlightMedia(state, item);
       
       // PHASE 6: Render windowed right column (±20 tiles around current)
-      const currentIndex = state.allItems.findIndex(i => i.id === item.id);
+      const numItemId = Number(item.id);
+      const currentIndex = state.allItems.findIndex(i => Number(i.id) === numItemId);
       const windowSize = 20;
       const start = Math.max(0, currentIndex - Math.floor(windowSize / 2));
       const end = Math.min(state.allItems.length, start + windowSize);
-      const windowedItems = state.allItems.slice(start, end).filter(i => i.id !== item.id);
+      const windowedItems = state.allItems.slice(start, end).filter(i => Number(i.id) !== numItemId);
       
-      // #region agent log
-      // Hypothesis E: Track windowing calculation
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4525',message:'Right column windowing',data:{totalAllItems:state.allItems.length,currentIndex,windowStart:start,windowEnd:end,windowedItemsCount:windowedItems.length,currentTileId:item.id},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'E'})}).catch(()=>{});
-      // #endregion
       
       logNav('Rendering Right Column (windowed)', {
         totalAllItems: state.allItems.length,
@@ -6036,9 +5790,6 @@
       // Mobile spotlight - FIXED: Use same openSpotlight() path as masonry taps
       // This ensures ONE rendering system for mobile (no duplicate UI)
       
-      // #region agent log H6
-      logMobile({hypothesisId:'H6',location:'renderSpotlightForTile:mobile-branch',message:'Mobile spotlight branch - calling openSpotlight',data:{itemId:item.id,allItemsCount:state.allItems.length,hasSpotlight:!!state.spotlight}});
-      // #endregion agent log H6
       
       // Call openSpotlight with skipAnimation=true (no tile element, direct URL mode)
       // This will create slides using the SAME path as masonry taps
@@ -6052,19 +5803,18 @@
    * ========================================
    */
   window.addEventListener('popstate', (event) => {
-    // #region agent log
-    // Hypothesis F: Track popstate event
-    fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4585',message:'Popstate event fired',data:{hasState:!!event.state,stateType:event.state?.type,tileId:event.state?.tileId,kitId:event.state?.kitId,url:window.location.href},timestamp:Date.now(),sessionId:'debug-session',runId:'nav-test',hypothesisId:'F'})}).catch(()=>{});
-    // #endregion
     
     logNav('popstate event', { 
       state: event.state,
       url: window.location.href
     });
     
+    // Check if gallery page exists behind the spotlight (same check as closeSpotlight)
+    const hasGalleryBehind = !!document.querySelector('.abu-pg-chapters-wrapper');
+    
     if (!event.state) {
       // No state = navigated to a non-SPA page or initial page load
-      // Close spotlight if open and reload
+      // Close spotlight if open
       if (GalleryStateManager.currentSpotlight) {
         const state = GalleryStateManager.currentSpotlight;
         if (state.desktopSpotlight) {
@@ -6075,17 +5825,21 @@
         GalleryStateManager.currentSpotlight = null;
       }
       
-      // Check if we should reload or stay
+      // If gallery exists behind, we just revealed it — no reload needed
+      if (hasGalleryBehind) {
+        logNav('popstate: gallery behind, no reload needed');
+        return;
+      }
+      
+      // No gallery behind — check if we should reload
       const urlParams = new URLSearchParams(window.location.search);
       const tileParam = urlParams.get('abu_pg_tile');
       
       if (!tileParam && window.location.pathname.includes('/tile/')) {
-        // Tile permalink without state - reload to get PHP rendering
         logNav('popstate reload', { reason: 'tile permalink without state' });
         window.location.reload();
       } else if (!tileParam && !window.location.pathname.includes('/tile/')) {
-        // Gallery page - reload to show gallery
-        logNav('popstate reload', { reason: 'gallery page' });
+        logNav('popstate reload', { reason: 'gallery page, no DOM' });
         window.location.reload();
       }
       
@@ -6107,8 +5861,8 @@
         return;
       }
       
-      // Find tile
-      const tileData = kitContext.tiles.find(t => t.id === tileId);
+      // Find tile (normalize to Number for consistent comparison)
+      const tileData = kitContext.tiles.find(t => Number(t.id) === Number(tileId));
       
       if (!tileData) {
         logNav('popstate reload', { reason: 'tile not found' });
@@ -6132,7 +5886,13 @@
         GalleryStateManager.currentSpotlight = null;
       }
       
-      // Reload gallery page
+      // If gallery exists behind, we just revealed it — no reload needed
+      if (hasGalleryBehind) {
+        logNav('popstate: gallery revealed, no reload');
+        return;
+      }
+      
+      // No gallery behind (e.g. permalink page) — reload to show gallery
       window.location.reload();
     }
   });
@@ -6148,9 +5908,9 @@
   window.openSpotlightForTilePermalink = function(tileData, kitContext) {
     console.log('[Tile Permalink] Opening spotlight for tile:', tileData.id);
     
-    // #region agent log H5
-    logMobile({hypothesisId:'H5',location:'openSpotlightForTilePermalink:entry',message:'Permalink opener called',data:{tileId:tileData.id,tileType:tileData.type,hasKitContext:!!kitContext,hasAdjacentTiles:!!(tileData.adjacentTiles&&tileData.adjacentTiles.length),adjacentCount:tileData.adjacentTiles?tileData.adjacentTiles.length:0,isMobile:isMobileDevice(),viewportW:window.innerWidth,viewportH:window.innerHeight,userAgent:navigator.userAgent.substring(0,60)}});
-    // #endregion agent log H5
+    // Mark this as the initial permalink visit so the render path can show
+    // "click/tap to play" on video tiles (browser blocks autoplay without interaction)
+    isInitialPermalinkVisit = true;
     
     // PHASE 1: Log spotlight initialization from permalink
     logNav('Spotlight Init from Permalink', {
@@ -6219,6 +5979,8 @@
       height: tileData.height || 0,
       originalAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
       masonryAspectRatio: (tileData.height && tileData.width) ? tileData.height / tileData.width : 1.5,
+      userHasLiked: !!tileData.userHasLiked,
+      likeCount: Number(tileData.likeCount || 0),
     };
     
     // Add media-specific fields
@@ -6239,6 +6001,8 @@
     const state = {
       container: document.body,
       isSpotlightEnabled: true,
+      isTouch: window.matchMedia && window.matchMedia('(hover: none)').matches,
+      isIOSWebKit: isIOSWebKit(),
       allItems: [item],
       activeItems: [item],
       templates: {
@@ -6285,13 +6049,11 @@
     state.iconTemplates.dotsHorizontal = getIconTemplate('dots-horizontal');
     state.iconTemplates.speakerLoud = getIconTemplate('speaker-loud');
     state.iconTemplates.speakerOff = getIconTemplate('speaker-off');
+    state.iconTemplates.maximize = getIconTemplate('maximize');
+    state.iconTemplates.cross2 = getIconTemplate('cross-2');
     
     // Add adjacent tiles if provided (for carousel navigation)
     if (tileData.adjacentTiles && Array.isArray(tileData.adjacentTiles)) {
-      // #region agent log
-      // Hypothesis G: Log adjacent tiles received
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4340',message:'Adjacent tiles received',data:{count:tileData.adjacentTiles.length,firstTileId:tileData.adjacentTiles[0]?.id},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
       
       // PHASE 1: Log adjacent tiles processing
       logNav('Processing Adjacent Tiles', {
@@ -6325,20 +6087,12 @@
       state.allItems = adjacentItems;
       state.activeItems = adjacentItems;
       
-      // #region agent log
-      // Hypothesis G: Log state populated
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4370',message:'State populated with tiles',data:{allItemsCount:state.allItems.length,activeItemsCount:state.activeItems.length},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'G'})}).catch(()=>{});
-      // #endregion
     }
     
     // Open spotlight
     if (!useMobileLayout) {
       createDesktopSpotlight(state);
       
-      // #region agent log
-      // Hypothesis H: Log before rendering media
-      fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4380',message:'About to render desktop spotlight',data:{hasKitContext:!!kitContext,kitUrl:kitContext?.kitUrl,allItemsCount:state.allItems.length},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'H'})}).catch(()=>{});
-      // #endregion
       
       renderDesktopSpotlightMedia(state, item);
       if (state.allItems.length > 1) {
@@ -6351,10 +6105,6 @@
           currentTileId: item.id
         });
         
-        // #region agent log
-        // Hypothesis I: Log right column rendering
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4391',message:'Rendering right column',data:{adjacentCount:adjacentItems.length},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'I'})}).catch(()=>{});
-        // #endregion
         
         renderDesktopSpotlightRightColumn(state, adjacentItems);
       } else {
@@ -6375,10 +6125,6 @@
           kitId: kitContext.kitId
         });
         
-        // #region agent log
-        // Hypothesis J: Log back button setup
-        fetch('http://127.0.0.1:7242/ingest/a9c04ef7-8b07-4b3a-a54e-d2c84a3df51f',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'gallery.js:4407',message:'Setting up back button',data:{kitUrl:kitContext.kitUrl},timestamp:Date.now(),sessionId:'debug-session',runId:'initial',hypothesisId:'J'})}).catch(()=>{});
-        // #endregion
         
         backBtn.addEventListener('click', (e) => {
           e.preventDefault();
@@ -6408,13 +6154,9 @@
       // Mobile spotlight - FIXED: Bootstrap kit context before opening spotlight
       // This ensures the same state structure as desktop direct entry
       
-      // #region agent log H6
-      logMobile({hypothesisId:'H6',location:'openSpotlightForTilePermalink:mobile-branch',message:'Mobile branch - bootstrapping state',data:{hasAdjacent:!!(tileData.adjacentTiles&&tileData.adjacentTiles.length),adjacentCount:tileData.adjacentTiles?tileData.adjacentTiles.length:0,hasKitContext:!!kitContext}});
-      // #endregion agent log H6
       
       // PHASE 1: Populate allItems from adjacentTiles (SAME as desktop line 5484-5506)
       if (tileData.adjacentTiles && Array.isArray(tileData.adjacentTiles)) {
-        logMobile({hypothesisId:'MOBILE_BOOTSTRAP',location:'openSpotlightForTilePermalink:populate-allItems',message:'Populating allItems from adjacentTiles',data:{count:tileData.adjacentTiles.length}});
         
         const adjacentItems = tileData.adjacentTiles.map(adjTile => ({
           id: adjTile.id,
@@ -6441,23 +6183,19 @@
         state.allItems = adjacentItems;
         state.activeItems = adjacentItems;
         
-        logMobile({hypothesisId:'MOBILE_BOOTSTRAP',location:'openSpotlightForTilePermalink:allItems-populated',message:'allItems populated',data:{allItemsCount:state.allItems.length,currentTileId:item.id}});
       } else {
         // Fallback: single item only
         state.allItems = [item];
         state.activeItems = [item];
         
-        logMobile({hypothesisId:'MOBILE_BOOTSTRAP',location:'openSpotlightForTilePermalink:fallback-single',message:'No adjacentTiles, using single item',data:{itemId:item.id}});
       }
       
       // PHASE 2: Add kitContext to state for close behavior (back button navigation)
       if (kitContext) {
         state.kitContext = kitContext;
-        logMobile({hypothesisId:'MOBILE_BOOTSTRAP',location:'openSpotlightForTilePermalink:kitContext-set',message:'kitContext added to state',data:{kitId:kitContext.kitId,kitUrl:kitContext.kitUrl}});
       }
       
       // Call openSpotlight with skipAnimation=true (no tile element, direct URL mode)
-      logMobile({hypothesisId:'MOBILE_BOOTSTRAP',location:'openSpotlightForTilePermalink:calling-openSpotlight',message:'Calling openSpotlight',data:{allItemsCount:state.allItems.length,hasKitContext:!!state.kitContext,skipAnimation:true}});
       openSpotlight(state, null, item, true);
     }
     

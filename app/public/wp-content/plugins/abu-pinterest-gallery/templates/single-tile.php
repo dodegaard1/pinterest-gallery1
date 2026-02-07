@@ -13,11 +13,43 @@ defined( 'ABSPATH' ) || exit;
 $tile_id = get_the_ID();
 $kit_id = isset( $_GET['kit'] ) ? absint( $_GET['kit'] ) : 0;
 
+// #region agent log
+abu_pg_debug_log( array(
+	'location'    => 'single-tile.php:entry',
+	'message'     => 'direct-url-visit',
+	'data'        => array(
+		'tileId'    => $tile_id,
+		'kitId'     => $kit_id,
+		'userAgent' => isset( $_SERVER['HTTP_USER_AGENT'] ) ? substr( sanitize_text_field( wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) ), 0, 80 ) : '',
+	),
+	'timestamp'   => round( microtime( true ) * 1000 ),
+	'sessionId'   => 'debug-session',
+	'hypothesisId' => 'direct-url',
+) );
+// #endregion
+
 // Get tile data
 $tile_data = abu_pg_get_tile_metadata( $tile_id );
 if ( ! $tile_data ) {
 	wp_die( __( 'Tile not found.', 'abu-pg' ), 404 );
 }
+
+// #region agent log
+abu_pg_debug_log( array(
+	'location'    => 'single-tile.php:tile-data',
+	'message'     => 'tile-metadata-loaded',
+	'data'        => array(
+		'tileId'   => $tile_id,
+		'tileType' => isset( $tile_data['type'] ) ? $tile_data['type'] : 'unknown',
+		'kitId'    => $kit_id,
+		'hasPoster' => ! empty( $tile_data['poster'] ),
+		'hasSrc720' => ! empty( $tile_data['src720'] ),
+	),
+	'timestamp'   => round( microtime( true ) * 1000 ),
+	'sessionId'   => 'debug-session',
+	'hypothesisId' => 'direct-url',
+) );
+// #endregion
 
 // Get kit context if provided
 $kit_post = null;
@@ -36,18 +68,8 @@ if ( $kit_id ) {
 		$chapters_json = get_post_meta( $kit_id, 'abu_pg_chapters_json', true );
 		$chapters = abu_pg_parse_chapters( $chapters_json );
 		
-		// #region agent log
-		// Hypothesis F: Log kit context loading
-		error_log('[DEBUG] ' . json_encode(['sessionId'=>'debug-session','runId'=>'initial','hypothesisId'=>'F','location'=>'single-tile.php:36','message'=>'Kit context loaded','data'=>['kit_id'=>$kit_id,'has_chapters'=>!empty($chapters),'chapter_count'=>count($chapters)],'timestamp'=>time()*1000]));
-		// #endregion
-		
 		// Get ALL tiles from this kit for adjacent tiles display
 		$adjacent_tiles = abu_pg_get_all_tiles_from_kit( $kit_id );
-		
-		// #region agent log
-		// Hypothesis G: Log adjacent tiles loading
-		error_log('[DEBUG] ' . json_encode(['sessionId'=>'debug-session','runId'=>'initial','hypothesisId'=>'G','location'=>'single-tile.php:45','message'=>'Adjacent tiles loaded','data'=>['kit_id'=>$kit_id,'tile_count'=>count($adjacent_tiles),'current_tile_id'=>$tile_id],'timestamp'=>time()*1000]));
-		// #endregion
 		
 		if ( $chapters ) {
 			// Get adjacent tiles for this kit
@@ -152,6 +174,18 @@ if ( $debug_enabled ) {
 	</div>
 	<div class="abu-pg-icon-template" data-icon="speaker-off" hidden>
 		<?php echo your_plugin_icon( 'speaker-off', 'yp-icon' ); ?>
+	</div>
+	<div class="abu-pg-icon-template" data-icon="paper-plane" hidden>
+		<?php echo your_plugin_icon( 'paper-plane', 'yp-icon' ); ?>
+	</div>
+	<div class="abu-pg-icon-template" data-icon="dots-horizontal" hidden>
+		<?php echo your_plugin_icon( 'dots-horizontal', 'yp-icon' ); ?>
+	</div>
+	<div class="abu-pg-icon-template" data-icon="maximize" hidden>
+		<?php echo your_plugin_icon( 'maximize', 'yp-icon' ); ?>
+	</div>
+	<div class="abu-pg-icon-template" data-icon="cross-2" hidden>
+		<?php echo your_plugin_icon( 'cross-2', 'yp-icon' ); ?>
 	</div>
 
 	<div class="abu-pg-tile-spotlight-container" data-tile-id="<?php echo esc_attr( $tile_id ); ?>" <?php if ( $kit_id ) : ?>data-kit-id="<?php echo esc_attr( $kit_id ); ?>"<?php endif; ?>>

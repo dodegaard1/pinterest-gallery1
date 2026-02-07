@@ -418,3 +418,111 @@ Returns: `{ kitId, kitUrl, kitTitle, tiles: [...] }` or error with appropriate H
 9. **Test both desktop and mobile.** Desktop and mobile are separate UI systems that share SPA infrastructure. A fix to one can break the other. Always test both after any navigation change.
 
 10. **Mobile swipe must update URL and history.** Every swipe-to-navigate on mobile must call the same `navigateToTile()` / `history.pushState` path as a desktop right-column click. The URL in the browser bar must always reflect the currently displayed tile.
+
+---
+
+## 14. Historical Fix Reference: Gallery-to-SPA Bridge (2026-02-06)
+
+This section documents a critical fix to the SPA navigation system. If SPA navigation from the desktop spotlight right column breaks again, check these areas first.
+
+### Problem
+
+Clicking a tile in the desktop spotlight right column caused a **full page navigation** instead of SPA navigation. This produced three visible symptoms:
+
+1. Download buttons disappeared from right-column tiles after navigating
+2. The comment send button lost its paper-plane SVG icon
+3. Clicking the back button showed a black page with a white bar (`abu-pg-tile-spotlight-container`) instead of the gallery
+
+### Root Cause
+
+The gallery-entry path (`initGallery` → `openDesktopSpotlight`) and the SPA navigation system (`GalleryStateManager` → `navigateToTile` → `renderSpotlightForTile`) were completely disconnected:
+
+1. **`openDesktopSpotlight` never set `GalleryStateManager.currentSpotlight`.** When `renderSpotlightForTile` checked `GalleryStateManager.currentSpotlight`, it found `null` and created a duplicate spotlight overlay instead of reusing the existing one.
+
+2. **The gallery-path `state` object had no `kitContext`.** The right-column tile click handler extracted `kitId` via `state.kitContext?.kitId`, which returned `undefined`. Since `kitId` was falsy, the code fell through to `window.location.href = item.permalink` — a full page reload to the tile permalink page.
+
+3. **Kit tile data was never seeded into `GalleryStateManager` from the gallery page.** `GalleryStateManager.ensureKit()` had no cache to draw from when entering via the gallery, so even if `kitId` had been available, the cache would have missed and triggered a REST API round-trip.
+
+4. **`single-tile.php` was missing `paper-plane` and `dots-horizontal` icon templates.** When the full page navigation landed on the permalink page, these icons were absent from the DOM, causing empty icon queries.
+
+### Fixes Applied
+
+| Component | Change | Why |
+|-----------|--------|-----|
+| `initGallery()` | Set `state.kitContext = { kitId, kitUrl, kitTitle }` from `data-post-id` on `.abu-pg-chapters-wrapper` | Right-column click handler needs `kitId` to call `navigateToTile()` |
+| Gallery init (after all chapters) | Aggregate all tiles from all chapter instances → `GalleryStateManager.setKit()` | Seeds the kit cache so `ensureKit()` gets a cache hit instead of falling through to REST API |
+| `openDesktopSpotlight()` | Set `GalleryStateManager.currentSpotlight = state` | Allows `renderSpotlightForTile()` to find and reuse the existing spotlight overlay |
+| `closeDesktopSpotlight()` | Set `GalleryStateManager.currentSpotlight = null` | Prevents stale spotlight references after close |
+| ID comparisons (4 locations) | Wrap in `Number()` for `navigateToTile`, `getAdjacentItems`, `renderSpotlightForTile`, popstate handler | DOM data attributes are strings, cache data uses numbers — `===` fails without normalization |
+| `renderDesktopSpotlightMedia()` back button | Check `document.querySelector('.abu-pg-chapters-wrapper')` — if gallery exists, call `closeDesktopSpotlight()`; if not (permalink entry), navigate to `state.kitContext.kitUrl` | Permalink pages have no gallery underneath the spotlight, so closing the overlay reveals nothing |
+| `single-tile.php` | Added `paper-plane` and `dots-horizontal` icon templates | These icons are used by the comment send button and comment actions; they were missing from the permalink page |
+
+### Key Invariants
+
+If this breaks again, verify these invariants hold:
+
+1. **After `openDesktopSpotlight()` completes:** `GalleryStateManager.currentSpotlight` must not be `null`
+2. **After `initGallery()` completes:** `state.kitContext.kitId` must be a valid number (from `data-post-id`)
+3. **After all gallery instances are initialized:** `GalleryStateManager.hasKit(kitId)` must return `true`
+4. **When a right-column tile is clicked:** `state.kitContext?.kitId` must be truthy, triggering `navigateToTile()` (not `window.location.href`)
+5. **In all ID comparisons across DOM/cache boundaries:** Use `Number()` normalization — never rely on `===` between DOM strings and cache numbers
+6. **`single-tile.php` icon templates:** Must include every icon used by the spotlight UI (currently: `caret-left`, `heart`, `heart-filled`, `chat-bubble`, `share-2`, `speaker-loud`, `speaker-off`, `paper-plane`, `dots-horizontal`)
+
+---
+
+## 15. Historical Fix Reference: Mobile Spotlight Close / Gallery Preservation (2026-02-06)
+
+This section documents a critical fix to the mobile spotlight close behavior. If mobile gallery reloading or scroll position bugs reappear, check these areas first.
+
+### Problem
+
+Closing the mobile spotlight (swipe-to-dismiss or back button) caused the gallery to **completely reload from scratch** every time. Symptoms:
+
+1. All masonry tiles visibly jumped into position as if the page was loading for the first time
+2. Scroll position was always lost — user returned to the top of the gallery instead of where they left off
+3. The experience was jarring compared to desktop, where open/close was seamless
+
+### Root Cause
+
+`closeSpotlight()` checked `state.kitContext && state.kitContext.kitUrl` to decide whether to do a full page navigation. But `kitContext` is **always set** when there is a kit — including when the user opened the spotlight from a masonry tap on the gallery page. So every mobile close triggered `window.location.href = state.kitContext.kitUrl` — a full page reload.
+
+The popstate handler had the same problem: it always called `window.location.reload()` for gallery states, even when the gallery DOM was right there behind the spotlight overlay.
+
+### The Desktop Approach (Reference)
+
+Desktop spotlight (`closeDesktopSpotlight`) never reloads. It:
+1. Removes the overlay from the DOM
+2. Unlocks scroll (restores saved `state.scrollY` via `window.scrollTo`)
+3. The gallery is revealed underneath — it was never destroyed
+
+The desktop back-button handler checks `document.querySelector('.abu-pg-chapters-wrapper')` to detect whether a gallery exists behind the spotlight. If yes, it just closes the overlay. If no (permalink page), it navigates to the kit URL.
+
+### Fixes Applied
+
+| Component | Change | Why |
+|-----------|--------|-----|
+| `closeSpotlight()` | Replaced `isDirectURLMode` check (`state.kitContext && state.kitContext.kitUrl`) with gallery DOM existence check (`!!document.querySelector('.abu-pg-chapters-wrapper')`) | Mirrors desktop logic: if gallery exists behind spotlight, just remove overlay; if not (direct URL entry), navigate to kit URL |
+| `closeSpotlight()` | Added `GalleryStateManager.currentSpotlight = null` | Prevents stale spotlight references after close (desktop already did this) |
+| `closeSpotlight()` | Added video cleanup: `pause()` + clear `src` for all spotlight videos | Frees media resources when spotlight closes on mobile (prevents background playback and memory pressure) |
+| Popstate handler (null state) | Added `hasGalleryBehind` check — if gallery DOM exists, close spotlight and return without reloading | Previously always reloaded, destroying the gallery even when it was right there |
+| Popstate handler (gallery state) | Added `hasGalleryBehind` check — if gallery DOM exists, close spotlight and return without reloading | Previously always called `window.location.reload()` |
+
+### Behavior After Fix
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Gallery tap → close spotlight | Full page reload, scroll to top | Overlay removed, gallery revealed, scroll restored |
+| Gallery tap → swipe through tiles → close | Full page reload, scroll to top | Overlay removed, scroll to approximate tile position (via `syncMasonryPosition`) |
+| Direct URL → close spotlight | Full page reload to gallery | Full page navigation to gallery (correct — no gallery behind) |
+| Direct URL → close → tap tile → close | Full page reload | First close loads gallery (correct), second close reveals gallery seamlessly |
+| Back button from spotlight | Full page reload | Overlay removed, gallery revealed |
+
+### Key Invariants
+
+If this breaks again, verify these invariants hold:
+
+1. **`closeSpotlight()` gallery check:** `document.querySelector('.abu-pg-chapters-wrapper')` must correctly detect gallery pages vs. tile permalink pages
+2. **`state.scrollY` preservation:** `lockScroll()` must save `window.scrollY` before the spotlight opens. `syncMasonryPosition()` must update it during swipe navigation. `unlockScroll()` must restore it on close.
+3. **iOS WebKit scroll lock:** `lockScroll` must NOT use `position: fixed` on iOS WebKit (causes viewport jump). It uses `overflow: hidden` only. Scroll is restored via `window.scrollTo()` in `unlockScroll`.
+4. **Video cleanup:** All spotlight videos must be paused and their `src` cleared on close to prevent background playback and memory leaks on mobile devices.
+5. **`GalleryStateManager.currentSpotlight`:** Must be set to `null` in `closeSpotlight()` — not just in `closeDesktopSpotlight()`.

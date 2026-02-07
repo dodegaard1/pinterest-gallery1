@@ -445,3 +445,25 @@ abu-users/
 The plugin is intentionally a single file. All logic — taxonomy registration, user meta, invitation system, redirects, admin UI, auth endpoint, social login, backward compatibility — lives in `abu-users.php`. This makes it fully portable and easy to audit.
 
 **Do not split this into multiple files unless the plugin grows significantly in scope.** A single-file plugin is easier to read, search, and audit than a multi-file structure with includes.
+
+---
+
+## 12. User Data in Gallery Plugin (2026-02-06)
+
+The gallery plugin (`abu-pinterest-gallery`) surfaces user data from WordPress in two places:
+
+### Comment Avatars
+
+Comment AJAX responses (`abu_pg_ajax_load_tile_comments`, `abu_pg_ajax_submit_comment`) include an `avatarUrl` field via `get_avatar_url($user_id, ['size' => 80])`. This returns:
+- **Gravatar** by default (hash of user email)
+- **Social login profile picture** when Nextend Social Login is active (ABU Users overrides `get_avatar_url` to prefer `nsl-profile-picture` user meta)
+
+The JS renders an `<img>` inside `.abu-pg-comment-avatar` when `avatarUrl` is present, falling back to text initials when absent.
+
+### Comment Author Names
+
+Comment responses use `first_name` + `last_name` from `get_user_meta()` instead of `display_name` / `comment_author`. Falls back to `comment_author` if no first/last name is stored. Social login users will have these populated automatically by Nextend from their Google/Meta profile.
+
+### Tile Likes
+
+Likes are stored as user IDs in `_abu_pg_likes` post meta on tile posts (managed by the gallery plugin). The gallery plugin's `abu_pg_get_tile_metadata()` includes `userHasLiked` (bool) in its JSON response, checked via `abu_pg_user_has_liked_tile()`. The JS like button persists state across SPA navigation by updating both the local item object and the `GalleryStateManager` cache on like/unlike. ABU Users provides the user identity; the gallery plugin owns the interaction data.

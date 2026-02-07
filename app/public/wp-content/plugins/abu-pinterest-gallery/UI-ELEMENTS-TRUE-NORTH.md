@@ -327,3 +327,19 @@ Ask yourself these questions. If you answer "no" or "unsure" to any of them, **s
 5. **If you don't understand the existing code, stop and ask.** The worst outcome is a confident workaround that breaks three other things.
 6. **Desktop and mobile spotlights are separate systems.** Don't conflate them, don't merge them, don't create a third.
 7. **Surgical edits only.** Small, targeted, in the canonical location, with clear reasoning.
+
+---
+
+## Desktop Spotlight Media Inner Wrapper (2026-02-06)
+
+The desktop spotlight left column media is wrapped in `.abu-pg-desktop-spotlight-media-inner` — a `<div>` with `position: relative` and `aspect-ratio` set from the item's dimensions. This is the positioning context for all media overlays and buttons.
+
+**Children of `.abu-pg-desktop-spotlight-media-inner`:**
+- `img` or `video` — fills the wrapper (`width: 100%; height: 100%; object-fit: cover`)
+- `.abu-pg-desktop-spotlight-poster` — `position: absolute; inset: 0` (video only, fades on play)
+- `.abu-pg-desktop-spotlight-play-prompt` — `position: absolute; inset: 0` (direct URL video only, removed after first play)
+- `.abu-pg-fullscreen-btn` — `position: absolute; right: 10px; bottom: 10px` (maximize button)
+
+**Why:** The outer `mediaWrapper` has padding and flex centering, so absolute positioning within it doesn't correspond to the media's edges. The inner wrapper sizes itself via `aspect-ratio` and `max-width: 90%; max-height: 90%`, matching the media's rendered bounds exactly. All children use simple `inset: 0` or fixed pixel offsets — no `calc()` hacks.
+
+**Fullscreen view:** Clicking the maximize button opens `.abu-pg-fullscreen-overlay` (appended to `body`, `z-index: 100000`). Contains a cloned media element centered in the viewport (`max-height: 90vh; max-width: 80vh`) with a dark backdrop and close button. Closing animates the clone back to the spotlight position and removes the overlay from the DOM. For videos, the original is paused while fullscreen is active and resumes on close.

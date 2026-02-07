@@ -577,15 +577,23 @@ body.abu-pg-scroll-lock {
 	box-sizing: border-box;
 }
 
-.abu-pg-desktop-spotlight-media-wrapper img,
-.abu-pg-desktop-spotlight-media-wrapper video {
+/* Inner wrapper: sizes itself via aspect-ratio, contains media + overlays + buttons.
+   All children position relative to this — like Pinterest's pin container. */
+.abu-pg-desktop-spotlight-media-inner {
+	position: relative;
 	max-width: 90%;
 	max-height: 90%;
-	width: auto;
-	height: auto;
-	display: block;
-	object-fit: contain;
+	overflow: hidden;
 	border-radius: 14px;
+}
+
+/* Media fills the inner wrapper */
+.abu-pg-desktop-spotlight-media-inner img,
+.abu-pg-desktop-spotlight-media-inner video {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
 }
 
 .abu-pg-desktop-spotlight-buttons-top {
@@ -637,6 +645,16 @@ body.abu-pg-scroll-lock {
 
 .abu-pg-like-btn[data-state="liked"] {
 	color: #ce8466;
+}
+
+.abu-pg-like-count {
+	font-family: 'Overused Grotesk', system-ui, sans-serif;
+	font-size: 13px;
+	font-weight: 500;
+	color: #444;
+	margin-left: -4px;
+	min-width: 0;
+	user-select: none;
 }
 
 .abu-pg-desktop-spotlight-save-btn {
@@ -754,16 +772,182 @@ body.abu-pg-scroll-lock {
 	display: inline-flex;
 }
 
+/* Poster overlays the inner wrapper — simple inset: 0 child */
 .abu-pg-desktop-spotlight-poster {
 	position: absolute;
 	inset: 0;
 	width: 100%;
 	height: 100%;
-	object-fit: contain;
+	object-fit: cover;
+	z-index: 2;
 	opacity: 1;
 	transition: opacity 180ms ease;
-	border-radius: 14px;
 	pointer-events: none;
+}
+
+/* Desktop spotlight: "click to play" prompt — inset: 0 child of inner wrapper */
+.abu-pg-desktop-spotlight-play-prompt {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.35);
+	color: #fff;
+	font-family: 'Overused Grotesk', system-ui, sans-serif;
+	font-size: 15px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	pointer-events: none;
+	transition: opacity 180ms ease;
+}
+
+/* "URL Copied" toast — same style as play prompt, inside media inner wrapper */
+.abu-pg-url-copied-toast {
+	position: absolute;
+	inset: 0;
+	z-index: 4;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.35);
+	color: #fff;
+	font-family: 'Overused Grotesk', system-ui, sans-serif;
+	font-size: 15px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	pointer-events: none;
+	opacity: 0;
+	transition: opacity 200ms ease;
+}
+
+/* Mobile spotlight: "tap to play" prompt for direct URL video tiles */
+.abu-pg-spotlight-play-prompt {
+	position: absolute;
+	inset: 0;
+	z-index: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.35);
+	color: #fff;
+	font-family: 'Overused Grotesk', system-ui, sans-serif;
+	font-size: 15px;
+	font-weight: 500;
+	letter-spacing: 0.02em;
+	pointer-events: none;
+	transition: opacity 180ms ease;
+}
+
+/* ========================================
+   FULLSCREEN MEDIA VIEW (Desktop Spotlight)
+   ======================================== */
+
+/* Maximize button — bottom-right corner inside the media inner wrapper */
+.abu-pg-fullscreen-btn {
+	position: absolute;
+	right: 10px;
+	bottom: 10px;
+	z-index: 1;
+	background: #fff;
+	color: #111;
+	border-radius: 8px;
+	width: 36px;
+	height: 36px;
+	box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+	cursor: pointer;
+	border: none;
+	padding: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: opacity 160ms ease, transform 160ms ease;
+}
+
+/* Images: button always visible */
+.abu-pg-desktop-spotlight-media-inner[data-media-type="image"] .abu-pg-fullscreen-btn {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+/* Videos: button hidden by default, shown on hover */
+.abu-pg-desktop-spotlight-media-inner[data-media-type="video"] .abu-pg-fullscreen-btn {
+	opacity: 0;
+	pointer-events: none;
+}
+
+.abu-pg-desktop-spotlight-media-inner[data-media-type="video"]:hover .abu-pg-fullscreen-btn {
+	opacity: 1;
+	pointer-events: auto;
+}
+
+@media (hover: hover) {
+	.abu-pg-fullscreen-btn:hover {
+		transform: translateY(-1px);
+	}
+}
+
+.abu-pg-fullscreen-btn .yp-icon {
+	width: 18px;
+	height: 18px;
+}
+
+/* Fullscreen overlay — appended to body, above everything */
+.abu-pg-fullscreen-overlay {
+	position: fixed;
+	inset: 0;
+	z-index: 100000;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+/* Semi-transparent backdrop */
+.abu-pg-fullscreen-backdrop {
+	position: absolute;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.88);
+	opacity: 0;
+	transition: opacity 400ms ease;
+}
+
+/* Cloned media in fullscreen */
+.abu-pg-fullscreen-media {
+	z-index: 1;
+	max-height: 95vh;
+	max-width: 85vw;
+	object-fit: contain;
+}
+
+/* Close button — top-left corner, rounded square, 50% white */
+.abu-pg-fullscreen-close {
+	position: absolute;
+	top: 24px;
+	left: 24px;
+	z-index: 2;
+	width: 50px;
+	height: 50px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.5);
+	border: none;
+	padding: 0;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	opacity: 0;
+	transition: opacity 400ms ease, background 160ms ease;
+}
+
+.abu-pg-fullscreen-close:hover {
+	background: rgba(255, 255, 255, 0.7);
+}
+
+.abu-pg-fullscreen-close .yp-icon {
+	width: 22px;
+	height: 22px;
+	color: #111;
 }
 
 /* Hide play button and overlay on main grid for desktop */
